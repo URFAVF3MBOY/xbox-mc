@@ -1,5 +1,5 @@
 diff --git a/MobileGlues-cpp/CMakeLists.txt b/MobileGlues-cpp/CMakeLists.txt
-index 0426186..e8afe19 100644
+index 0426186..914d88f 100644
 --- a/MobileGlues-cpp/CMakeLists.txt
 +++ b/MobileGlues-cpp/CMakeLists.txt
 @@ -28,7 +28,9 @@ set(SPIRV_CROSS_ENABLE_UTIL    OFF CACHE BOOL "Disable util" FORCE)
@@ -31,7 +31,7 @@ index 0426186..e8afe19 100644
      # Calls between this library's own translation units must land in this
      # library. Without this, an internal call to an exported gl* symbol goes
      # through a preemptible PLT slot, and in an Android app process the system
-@@ -152,7 +154,12 @@ if (NOT MSVC)
+@@ -152,7 +154,13 @@ if (NOT MSVC)
      target_link_options(${CMAKE_PROJECT_NAME} PRIVATE -Wl,-Bsymbolic-functions)
  endif()
  
@@ -40,15 +40,25 @@ index 0426186..e8afe19 100644
 +    # windows / xbox: dlopen etc. from the compat folder, GLES/EGL loaded at runtime
 +    target_sources(${CMAKE_PROJECT_NAME} PRIVATE ${MG_COMPAT_DIR}/dlfcn.cpp)
 +    target_include_directories(${CMAKE_PROJECT_NAME} BEFORE PRIVATE ${MG_COMPAT_DIR})
-+    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE MG_WINDOWS=1)
++    # BUILD_GL32 makes gl.h use dllexport, MG_KHRONOS_EXPORT makes the egl/gles headers use it too
++    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE MG_WINDOWS=1 BUILD_GL32=1 MG_KHRONOS_EXPORT=1)
 +elseif(MACOS)
      # iOS
      target_link_libraries(${CMAKE_PROJECT_NAME} PUBLIC
          "-F${CMAKE_SOURCE_DIR}/external"
 diff --git a/MobileGlues-cpp/config/gpu_utils.cpp b/MobileGlues-cpp/config/gpu_utils.cpp
-index 51fa101..d87f21f 100644
+index 51fa101..de30de9 100644
 --- a/MobileGlues-cpp/config/gpu_utils.cpp
 +++ b/MobileGlues-cpp/config/gpu_utils.cpp
+@@ -7,7 +7,7 @@
+ 
+ #include "gpu_utils.h"
+ #include "../gles/loader.h"
+-#if !defined(__APPLE__)
++#if !defined(__APPLE__) && !defined(MG_WINDOWS)
+ #include "vulkan/vulkan.h"
+ #endif
+ 
 @@ -18,9 +18,15 @@ typedef const char* cstr;
  // open_lib() below hands these to dlopen() verbatim, unlike the loader in gles/loader.cpp which appends a
  // platform extension itself. Without the ".so" every dlopen here fails, getGPUInfo() returns an empty string
@@ -65,6 +75,76 @@ index 51fa101..d87f21f 100644
  
  namespace egl_func {
      PFNEGLGETDISPLAYPROC eglGetDisplay = nullptr;
+@@ -175,7 +181,7 @@ int hasVulkan12() {
+     void* vulkan_lib = open_lib(vk_lib, nullptr);
+     if (!vulkan_lib) return 0;
+ 
+-#ifndef __APPLE__
++#if !defined(__APPLE__) && !defined(MG_WINDOWS)
+ 
+     typedef VkResult (*PFN_vkEnumerateInstanceExtensionProperties)(const char*, uint32_t*, VkExtensionProperties*);
+     typedef VkResult (*PFN_vkCreateInstance)(const VkInstanceCreateInfo*, const VkAllocationCallbacks*, VkInstance*);
+diff --git a/MobileGlues-cpp/egl/egl.cpp b/MobileGlues-cpp/egl/egl.cpp
+index 61b2759..c1267e8 100644
+--- a/MobileGlues-cpp/egl/egl.cpp
++++ b/MobileGlues-cpp/egl/egl.cpp
+@@ -495,7 +495,11 @@ namespace {
+ 
+ extern "C"
+ {
++#ifdef MG_WINDOWS
++#define EGL_API __declspec(dllexport)
++#else
+ #define EGL_API __attribute__((visibility("default")))
++#endif
+     EGL_API EGLint eglGetError(void) {
+         LOG_D("eglGetError");
+         LOAD_EGL(eglGetError)
+diff --git a/MobileGlues-cpp/gl/ExtWrappers/DSAWrapper.h b/MobileGlues-cpp/gl/ExtWrappers/DSAWrapper.h
+index 8192755..ad72553 100644
+--- a/MobileGlues-cpp/gl/ExtWrappers/DSAWrapper.h
++++ b/MobileGlues-cpp/gl/ExtWrappers/DSAWrapper.h
+@@ -7,7 +7,9 @@
+ #pragma once
+ #define GL_GLEXT_PROTOTYPES
+ #include <GL/gl.h>
+-#include <regex.h>
++#ifndef MG_WINDOWS
++#include <regex.h> // not used on windows, no posix regex there
++#endif
+ #include "../log.h"
+ #include "../shader.h"
+ #include "../program.h"
+diff --git a/MobileGlues-cpp/gl/ExtWrappers/MultiBindWrapper.h b/MobileGlues-cpp/gl/ExtWrappers/MultiBindWrapper.h
+index 48dd13d..33ff7e9 100644
+--- a/MobileGlues-cpp/gl/ExtWrappers/MultiBindWrapper.h
++++ b/MobileGlues-cpp/gl/ExtWrappers/MultiBindWrapper.h
+@@ -7,7 +7,9 @@
+ #pragma once
+ #define GL_GLEXT_PROTOTYPES
+ #include <GL/gl.h>
+-#include <regex.h>
++#ifndef MG_WINDOWS
++#include <regex.h> // not used on windows, no posix regex there
++#endif
+ #include "../log.h"
+ #include "../shader.h"
+ #include "../program.h"
+diff --git a/MobileGlues-cpp/gl/program.cpp b/MobileGlues-cpp/gl/program.cpp
+index 4c3a9d2..cd44a3e 100644
+--- a/MobileGlues-cpp/gl/program.cpp
++++ b/MobileGlues-cpp/gl/program.cpp
+@@ -5,7 +5,9 @@
+ // SPDX-License-Identifier: LGPL-2.1-only
+ // End of Source File Header
+ 
+-#include <regex.h>
++#ifndef MG_WINDOWS
++#include <regex.h> // not used on windows, no posix regex there
++#endif
+ #include "GL/glext.h"
+ #include "GLES3/gl32.h"
+ #include "log.h"
 diff --git a/MobileGlues-cpp/gles/loader.cpp b/MobileGlues-cpp/gles/loader.cpp
 index 726ff47..eea4c8d 100644
 --- a/MobileGlues-cpp/gles/loader.cpp
@@ -101,3 +181,19 @@ index 726ff47..eea4c8d 100644
  
  static const char* egl_lib[] = {
  #if defined(BCMHOST)
+diff --git a/MobileGlues-cpp/include/KHR/khrplatform.h b/MobileGlues-cpp/include/KHR/khrplatform.h
+index 8ec0d19..75e0011 100644
+--- a/MobileGlues-cpp/include/KHR/khrplatform.h
++++ b/MobileGlues-cpp/include/KHR/khrplatform.h
+@@ -97,7 +97,10 @@
+  *-------------------------------------------------------------------------
+  * This precedes the return type of the function in the function prototype.
+  */
+-#if defined(_WIN32) && !defined(__SCITECH_SNAP__)
++#if defined(MG_KHRONOS_EXPORT)
++    /* MobileGlues on windows implements these itself, so it exports them */
++#   define KHRONOS_APICALL __declspec(dllexport)
++#elif defined(_WIN32) && !defined(__SCITECH_SNAP__)
+ #   define KHRONOS_APICALL __declspec(dllimport)
+ #elif defined (__SYMBIAN32__)
+ #   define KHRONOS_APICALL IMPORT_C

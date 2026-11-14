@@ -22,7 +22,7 @@ static HMODULE self_module() {
 extern "C" void* dlopen(const char* file, int) {
     if (!file) return self_module();
     std::wstring wide(file, file + strlen(file));
-    for (auto& c : wide) if (c == L'/') c = L'\';
+    for (auto& c : wide) if (c == L'/') c = L'\\';
 #if defined(WINAPI_FAMILY) && WINAPI_FAMILY == WINAPI_FAMILY_APP
     // in a uwp app only dlls inside the package can be loaded, by relative name
     HMODULE mod = LoadPackagedLibrary(wide.c_str(), 0);

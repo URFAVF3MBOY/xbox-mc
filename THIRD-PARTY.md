@@ -6,6 +6,7 @@
 | [zlib](https://zlib.net) (ANGLE dependency) | compression | zlib |
 | Microsoft VCLibs 14.0 framework, `d3dcompiler_47.dll` | C++ runtime and HLSL compiler from the Windows SDK | Microsoft redistributable terms |
 
-Planned: [MobileGlues](https://github.com/MobileGL-Dev/MobileGlues) (LGPL-2.1),
-OpenJDK, LWJGL, Fabric. Minecraft itself is never included; the launcher
+| [MobileGlues](https://github.com/MobileGL-Dev/MobileGlues) with my windows patches in `mobileglues/` | desktop OpenGL on top of GLES | LGPL-2.1 (`mobileglues/LICENSE`) |
+
+Planned: OpenJDK, LWJGL, Fabric. Minecraft itself is never included; the launcher
 downloads it from Mojang after sign-in.
