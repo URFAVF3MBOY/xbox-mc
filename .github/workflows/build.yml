@@ -70,6 +70,15 @@ jobs:
           path: staging\mg-dll
           key: mg-x64-uwp-${{ hashFiles('mobileglues/**', 'vcpkg.json') }}
 
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Build java runtime
+        shell: powershell
+        run: .\java\build.ps1 -Jdk $env:JAVA_HOME
+
       - name: Build app
         shell: powershell
         run: .\build.ps1 -AngleDir staging\vcpkg_installed\x64-uwp -MobileGluesDll staging\mg-dll\mobileglues.dll -Version "0.1.${{ github.run_number }}.0"
