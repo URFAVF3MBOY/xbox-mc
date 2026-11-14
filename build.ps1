@@ -9,12 +9,16 @@ param(
     [string] $PfxPath = "",
     [string] $PfxPassword = "",
     [string] $OutDir = "out",
-    [string] $MobileGluesDll = ""
+    [string] $MobileGluesDll = "",
+    # output of java\build.ps1 (jre, test classes, jni headers)
+    [string] $JavaDir = "staging\java"
 )
 
 $ErrorActionPreference = "Stop"
 $root = $PSScriptRoot
 $AngleDir = (Resolve-Path $AngleDir).Path
+if (-not (Test-Path (Join-Path $JavaDir "jre"))) { throw "no jre in $JavaDir, run java\build.ps1 first" }
+$JavaDir = (Resolve-Path $JavaDir).Path
 $stage = Join-Path $root "staging\package"
 $obj = Join-Path $root "staging\obj"
 $OutDir = Join-Path $root $OutDir
@@ -49,7 +53,7 @@ $bat = Join-Path $obj "compile.bat"
 call "$vcvars" store $sdkVer >nul || exit /b 1
 cl /nologo /std:c++20 /EHsc /O2 /MD /W3 /permissive- ^
   /DWINAPI_FAMILY=WINAPI_FAMILY_APP /DUNICODE /D_UNICODE /DNOMINMAX ^
-  /I "$AngleDir\include" /Fo"$obj\\" ^
+  /I "$AngleDir\include" /I "$JavaDir\include" /Fo"$obj\\" ^
   "$root\host\main.cpp" ^
   /Fe"$exe" ^
   /link /APPCONTAINER /SUBSYSTEM:WINDOWS /LIBPATH:"$AngleDir\lib" libEGL.lib libGLESv2.lib windowsapp.lib
@@ -63,6 +67,14 @@ Copy-Item (Join-Path $AngleDir "bin\*.dll") $stage
 # mobileglues loads libEGL/libGLESv2 by name, so it sits right next to them
 if ($MobileGluesDll) { Copy-Item (Resolve-Path $MobileGluesDll).Path $stage }
 else { Write-Warning "no -MobileGluesDll, the app will show blue" }
+# java: the jre keeps its own layout (jvm.dll finds java.home from where it is)
+Copy-Item -Recurse (Join-Path $JavaDir "jre") (Join-Path $stage "jre")
+Copy-Item -Recurse (Join-Path $JavaDir "classes") (Join-Path $stage "java")
+# jvm.dll needs the desktop vc runtime and the loader only looks in the
+# package root for it, not next to jvm.dll
+foreach ($d in @("vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll")) {
+    Copy-Item (Join-Path $JavaDir "jre\bin\$d") $stage
+}
 # angle needs this to compile shaders
 $d3dc = Join-Path $kits "Redist\D3D\x64\d3dcompiler_47.dll"
 if (Test-Path $d3dc) { Copy-Item $d3dc $stage } else { Write-Warning "d3dcompiler_47.dll not found in the SDK redist" }

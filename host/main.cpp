@@ -1,8 +1,10 @@
-// step 2: desktop GL through mobileglues -> angle -> d3d11
-// everything (egl + gl) goes through mobileglues.dll, the app doesnt touch angle itself.
-// color: green + white triangle = works, blue = mobileglues.dll didnt load,
-// magenta = it loaded but egl/gl failed. log goes to LocalState\step2.log,
-// mobileglues writes its own to LocalState\MG\latest.log
+// step 3: java inside the app, on top of the step 2 gl test
+// gl goes through mobileglues.dll (white triangle = gl works), the background says
+// how java did: yellow = starting, green = java ran, red = jvm.dll didnt load,
+// orange = jvm didnt start or the test class failed.
+// blue = mobileglues.dll didnt load, magenta = egl/gl failed.
+// logs in LocalState: step3.log (this + jvm output), java.log (the test class),
+// MG\latest.log (mobileglues), hs_err_pid*.log if the jvm crashes
 
 #include <winrt/Windows.ApplicationModel.h>
 #include <winrt/Windows.ApplicationModel.Core.h>
@@ -17,7 +19,9 @@
 #include <EGL/eglext.h>
 #include <EGL/eglext_angle.h>
 #include <GLES2/gl2.h>
+#include <jni.h>
 
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdarg>
@@ -25,6 +29,7 @@
 #include <cstdlib>
 #include <share.h>
 #include <string>
+#include <vector>
 
 using namespace winrt;
 using namespace winrt::Windows::ApplicationModel;
@@ -106,10 +111,184 @@ std::string Narrow(std::wstring const& w)
 
 void OpenLog()
 {
-    std::wstring path = LocalDir() + L"\\step2.log";
+    std::wstring path = LocalDir() + L"\\step3.log";
     // shared so device portal can read it while the app runs
     g_log = _wfsopen(path.c_str(), L"w", _SH_DENYNO);
-    LogLine("xbox-mc step 2 test");
+    LogLine("xbox-mc step 3 test");
+}
+
+std::wstring InstallDir()
+{
+    return std::wstring{ Package::Current().InstalledLocation().Path() };
+}
+
+// ---- java ----
+
+enum class JavaState { Starting, Ok, NoJvmDll, Failed };
+std::atomic<JavaState> g_java{ JavaState::Starting };
+
+// LoadLibraryExW isnt in the uwp headers. it still exists, so find it in
+// kernelbase through the module that holds a function we can link
+using LoadLibraryExWFn = HMODULE(WINAPI*)(LPCWSTR, HANDLE, DWORD);
+LoadLibraryExWFn FindLoadLibraryExW()
+{
+    MEMORY_BASIC_INFORMATION mbi{};
+    if (!VirtualQuery(reinterpret_cast<void*>(&CreateFile2), &mbi, sizeof(mbi))) return nullptr;
+    return reinterpret_cast<LoadLibraryExWFn>(
+        GetProcAddress(static_cast<HMODULE>(mbi.AllocationBase), "LoadLibraryExW"));
+}
+
+// the system dlls jvm.dll + the core java dlls import. not all of them
+// have to exist on the xbox, this says which ones dont
+void ProbeSystemDlls()
+{
+    auto loadEx = FindLoadLibraryExW();
+    if (!loadEx) {
+        LogLine("probe: LoadLibraryExW not found");
+        return;
+    }
+    const wchar_t* dlls[] = { L"kernel32.dll", L"user32.dll", L"advapi32.dll", L"powrprof.dll", L"ws2_32.dll",
+                              L"winmm.dll", L"version.dll", L"ucrtbase.dll", L"shell32.dll", L"comctl32.dll",
+                              L"winhttp.dll", L"secur32.dll", L"iphlpapi.dll", L"mswsock.dll" };
+    for (auto name : dlls) {
+        HMODULE h = loadEx(name, nullptr, 0);
+        if (h) LogLine("probe: %ls ok", name);
+        else LogLine("probe: %ls MISSING (error %lu)", name, GetLastError());
+    }
+}
+
+jint JNICALL JvmVfprintf(FILE*, const char* fmt, va_list args)
+{
+    if (!g_log) return 0;
+    int n = vfprintf(g_log, fmt, args);
+    fflush(g_log);
+    return n;
+}
+
+void JNICALL JvmExit(jint code) { LogLine("jvm: exit(%d)", code); }
+void JNICALL JvmAbort() { LogLine("jvm: abort"); }
+
+std::string ExceptionText(JNIEnv* env)
+{
+    jthrowable ex = env->ExceptionOccurred();
+    if (!ex) return "";
+    env->ExceptionClear();
+    std::string text = "(no message)";
+    jclass cls = env->GetObjectClass(ex);
+    if (jmethodID toString = env->GetMethodID(cls, "toString", "()Ljava/lang/String;")) {
+        if (auto s = static_cast<jstring>(env->CallObjectMethod(ex, toString))) {
+            const char* c = env->GetStringUTFChars(s, nullptr);
+            text = c;
+            env->ReleaseStringUTFChars(s, c);
+        }
+    }
+    // full trace goes to java.log if the test class got to setErr
+    if (jmethodID print = env->GetMethodID(cls, "printStackTrace", "()V")) env->CallVoidMethod(ex, print);
+    env->ExceptionClear();
+    return text;
+}
+
+void RunJava()
+{
+    ProbeSystemDlls();
+
+    auto t0 = std::chrono::steady_clock::now();
+    auto elapsed = [&] {
+        return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+    };
+
+    HMODULE jvm = LoadPackagedLibrary(L"jre\\bin\\server\\jvm.dll", 0);
+    if (!jvm) {
+        LogLine("LoadPackagedLibrary(jre\\bin\\server\\jvm.dll) failed, error %lu", GetLastError());
+        g_java = JavaState::NoJvmDll;
+        return;
+    }
+    LogLine("jvm.dll loaded in %.0f ms", elapsed());
+
+    using CreateVm = jint(JNICALL*)(JavaVM**, void**, void*);
+    auto create = reinterpret_cast<CreateVm>(GetProcAddress(jvm, "JNI_CreateJavaVM"));
+    if (!create) {
+        LogLine("JNI_CreateJavaVM not exported");
+        g_java = JavaState::Failed;
+        return;
+    }
+
+    std::string local = Narrow(LocalDir());
+    std::string install = Narrow(InstallDir());
+    std::string tmp = local + "\\tmp";
+    CreateDirectoryA(tmp.c_str(), nullptr);
+
+    std::string opts[] = {
+        "-Djava.class.path=" + install + "\\java",
+        "-Duser.home=" + local,
+        "-Djava.io.tmpdir=" + tmp,
+        "-Xmx2560m",
+        // no shared memory perf file, it wants a desktop temp dir
+        "-XX:-UsePerfData",
+        "-XX:ErrorFile=" + local + "\\hs_err_pid%p.log",
+        // jvm log output ends up in the vfprintf hook below, so in step3.log
+        "-Xlog:all=warning,os=info",
+    };
+    std::vector<JavaVMOption> vmOpts;
+    for (auto& o : opts) {
+        LogLine("jvm option: %s", o.c_str());
+        vmOpts.push_back({ const_cast<char*>(o.c_str()), nullptr });
+    }
+    vmOpts.push_back({ const_cast<char*>("vfprintf"), reinterpret_cast<void*>(&JvmVfprintf) });
+    vmOpts.push_back({ const_cast<char*>("exit"), reinterpret_cast<void*>(&JvmExit) });
+    vmOpts.push_back({ const_cast<char*>("abort"), reinterpret_cast<void*>(&JvmAbort) });
+
+    JavaVMInitArgs args{};
+    args.version = JNI_VERSION_10;
+    args.nOptions = static_cast<jint>(vmOpts.size());
+    args.options = vmOpts.data();
+    args.ignoreUnrecognized = JNI_FALSE;
+
+    JavaVM* vm = nullptr;
+    JNIEnv* env = nullptr;
+    jint rc = create(&vm, reinterpret_cast<void**>(&env), &args);
+    if (rc != JNI_OK) {
+        LogLine("JNI_CreateJavaVM failed: %d", rc);
+        g_java = JavaState::Failed;
+        return;
+    }
+    LogLine("jvm started in %.0f ms", elapsed());
+
+    jclass hello = env->FindClass("Hello");
+    jmethodID main = hello ? env->GetStaticMethodID(hello, "main", "([Ljava/lang/String;)V") : nullptr;
+    if (!main) {
+        LogLine("Hello.main not found: %s", ExceptionText(env).c_str());
+        g_java = JavaState::Failed;
+        return;
+    }
+    jobjectArray noArgs = env->NewObjectArray(0, env->FindClass("java/lang/String"), nullptr);
+    env->CallStaticVoidMethod(hello, main, noArgs);
+    if (env->ExceptionCheck()) {
+        LogLine("Hello.main threw: %s", ExceptionText(env).c_str());
+        g_java = JavaState::Failed;
+        return;
+    }
+    LogLine("Hello.main returned after %.0f ms total, see java.log", elapsed());
+    g_java = JavaState::Ok;
+    // the vm stays up, minecraft will live in it later
+}
+
+DWORD WINAPI JavaThread(void*)
+{
+    RunJava();
+    return 0;
+}
+
+void StartJava()
+{
+    // the jvm wants a big stack on the thread that creates it
+    HANDLE t = CreateThread(nullptr, 16 * 1024 * 1024, JavaThread, nullptr, STACK_SIZE_PARAM_IS_A_RESERVATION, nullptr);
+    if (!t) {
+        LogLine("CreateThread for java failed, error %lu", GetLastError());
+        g_java = JavaState::Failed;
+        return;
+    }
+    CloseHandle(t);
 }
 
 const char* EglErrorName(EGLint e)
@@ -431,9 +610,11 @@ struct App : implements<App, IFrameworkViewSource, IFrameworkView> {
             return;
         }
 
-        float r, g, b;
-        if (glOk) { r = 0.0f; g = 0.7f; b = 0.2f; LogLine("result: green"); }
-        else      { r = 0.8f; g = 0.0f; b = 0.8f; LogLine("result: magenta (gl failed)"); }
+        float r = 0.8f, g = 0.0f, b = 0.8f;
+        if (!glOk) LogLine("result: magenta (gl failed)");
+        else StartJava();
+        JavaState shown = JavaState::Starting;
+        bool first = true;
 
         auto& gl = m_r.gl;
         auto start = std::chrono::steady_clock::now();
@@ -441,6 +622,18 @@ struct App : implements<App, IFrameworkViewSource, IFrameworkView> {
         auto dispatcher = m_window.Dispatcher();
         while (!m_closed) {
             dispatcher.ProcessEvents(CoreProcessEventsOption::ProcessAllIfPresent);
+
+            JavaState js = g_java.load();
+            if (glOk && (first || js != shown)) {
+                first = false;
+                shown = js;
+                switch (js) {
+                case JavaState::Starting: r = 0.9f; g = 0.8f; b = 0.0f; break;
+                case JavaState::Ok:       r = 0.0f; g = 0.7f; b = 0.2f; LogLine("result: green"); break;
+                case JavaState::NoJvmDll: r = 0.8f; g = 0.0f; b = 0.0f; LogLine("result: red"); break;
+                case JavaState::Failed:   r = 1.0f; g = 0.5f; b = 0.0f; LogLine("result: orange"); break;
+                }
+            }
 
             double t = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
             float pulse = 0.75f + 0.25f * static_cast<float>(std::sin(t * 2.0));
