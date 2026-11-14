@@ -37,10 +37,21 @@ $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer
 $env:PATH = (Split-Path $vswhere) + ";" + $env:PATH
 $vsPath = & $vswhere -latest -prerelease -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
 $vcvars = Join-Path $vsPath "VC\Auxiliary\Build\vcvars64.bat"
-$cmake = Join-Path $vsPath "Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe"
-$ninja = Join-Path $vsPath "Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja\ninja.exe"
-$clang = Join-Path $vsPath "VC\Tools\Llvm\x64\bin\clang-cl.exe"
-foreach ($t in @($cmake, $ninja, $clang)) { if (-not (Test-Path $t)) { throw "missing $t" } }
+# VS's own copies first, then whatever else is installed (github runners
+# don't always have VS's llvm, but they have C:\Program Files\LLVM)
+function Find-Tool($name, $paths) {
+    foreach ($p in $paths) { if ($p -and (Test-Path $p)) { return $p } }
+    $c = Get-Command $name -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($c) { return $c.Source }
+    throw "missing $name"
+}
+$cmake = Find-Tool cmake.exe @((Join-Path $vsPath "Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe"))
+$ninja = Find-Tool ninja.exe @((Join-Path $vsPath "Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja\ninja.exe"))
+$clang = Find-Tool clang-cl.exe @((Join-Path $vsPath "VC\Tools\Llvm\x64\bin\clang-cl.exe"),
+                                  (Join-Path $env:ProgramFiles "LLVM\bin\clang-cl.exe"))
+Write-Host "cmake: $cmake"
+Write-Host "ninja: $ninja"
+Write-Host "clang: $clang"
 
 $compat = (Join-Path $here "compat").Replace("\", "/")
 $angleInc = (Join-Path $AngleDir "include").Replace("\", "/")

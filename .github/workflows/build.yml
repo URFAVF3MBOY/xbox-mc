@@ -47,9 +47,32 @@ jobs:
           name: angle-x64-uwp
           path: staging\vcpkg_installed\x64-uwp
 
+      # mobileglues only gets rebuilt when the patches or compat files change
+      - name: Restore mobileglues
+        id: mg
+        uses: actions/cache/restore@v4
+        with:
+          path: staging\mg-dll
+          key: mg-x64-uwp-${{ hashFiles('mobileglues/**', 'vcpkg.json') }}
+
+      - name: Build mobileglues
+        if: steps.mg.outputs.cache-hit != 'true'
+        shell: powershell
+        run: |
+          .\mobileglues\build.ps1 -AngleDir staging\vcpkg_installed\x64-uwp
+          New-Item -ItemType Directory -Force staging\mg-dll | Out-Null
+          Copy-Item staging\mg-build\mobileglues.dll staging\mg-dll
+
+      - name: Save mobileglues
+        if: steps.mg.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: staging\mg-dll
+          key: mg-x64-uwp-${{ hashFiles('mobileglues/**', 'vcpkg.json') }}
+
       - name: Build app
         shell: powershell
-        run: .\build.ps1 -AngleDir staging\vcpkg_installed\x64-uwp -Version "0.1.${{ github.run_number }}.0"
+        run: .\build.ps1 -AngleDir staging\vcpkg_installed\x64-uwp -MobileGluesDll staging\mg-dll\mobileglues.dll -Version "0.1.${{ github.run_number }}.0"
 
       - uses: actions/upload-artifact@v4
         with:
