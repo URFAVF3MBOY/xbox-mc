@@ -1,0 +1,12 @@
+# build output
+build/
+out/
+*.appx
+*.msix
+*.pfx
+# downloaded runtimes and game files
+staging/
+cache/
+# console logs and dumps
+logs/
+
