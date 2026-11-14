@@ -85,7 +85,7 @@ index 51fa101..de30de9 100644
      typedef VkResult (*PFN_vkEnumerateInstanceExtensionProperties)(const char*, uint32_t*, VkExtensionProperties*);
      typedef VkResult (*PFN_vkCreateInstance)(const VkInstanceCreateInfo*, const VkAllocationCallbacks*, VkInstance*);
 diff --git a/MobileGlues-cpp/egl/egl.cpp b/MobileGlues-cpp/egl/egl.cpp
-index 61b2759..c1267e8 100644
+index 61b2759..deb5657 100644
 --- a/MobileGlues-cpp/egl/egl.cpp
 +++ b/MobileGlues-cpp/egl/egl.cpp
 @@ -495,7 +495,11 @@ namespace {
@@ -100,6 +100,38 @@ index 61b2759..c1267e8 100644
      EGL_API EGLint eglGetError(void) {
          LOG_D("eglGetError");
          LOAD_EGL(eglGetError)
+@@ -515,6 +519,7 @@ extern "C"
+     }
+ 
+     EGL_API EGLDisplay eglGetDisplay(EGLNativeDisplayType display_id) {
++        MG_LAZY_INIT()
+         LOG_D("eglGetDisplay, display_id: %p", display_id);
+         LOAD_EGL(eglGetDisplay)
+         const EGLDisplay dpy = egl_eglGetDisplay(display_id);
+@@ -886,6 +891,7 @@ extern "C"
+     }
+ 
+     EGL_API EGLDisplay eglGetPlatformDisplay(EGLenum platform, void* native_display, const EGLAttrib* attrib_list) {
++        MG_LAZY_INIT()
+         LOG_D("eglGetPlatformDisplay, platform: %d, native_display: %p, attrib_list: "
+               "%p",
+               platform, native_display, attrib_list);
+@@ -910,6 +916,7 @@ extern "C"
+     }
+ 
+     EGL_API EGLDisplay eglGetPlatformDisplayEXT(EGLenum platform, void* native_display, const EGLint* attrib_list) {
++        MG_LAZY_INIT()
+         LOG_D("eglGetPlatformDisplayEXT, platform: %d, native_display: %p, attrib_list: %p", platform, native_display,
+               attrib_list);
+         LOAD_EGL_OR(eglGetPlatformDisplayEXT, setFrontendError(EGL_BAD_PARAMETER), EGL_NO_DISPLAY)
+@@ -992,6 +999,7 @@ extern "C"
+     // GL names still go through glXGetProcAddress, which applies the multi-draw
+     // backend mangling.
+     EGL_API EGLAPI __eglMustCastToProperFunctionPointerType EGLAPIENTRY eglGetProcAddress(const char* procname) {
++        MG_LAZY_INIT()
+         if (procname == nullptr) return nullptr;
+ 
+         struct egl_entry_t {
 diff --git a/MobileGlues-cpp/gl/ExtWrappers/DSAWrapper.h b/MobileGlues-cpp/gl/ExtWrappers/DSAWrapper.h
 index 8192755..ad72553 100644
 --- a/MobileGlues-cpp/gl/ExtWrappers/DSAWrapper.h
@@ -182,10 +214,18 @@ index 726ff47..eea4c8d 100644
  static const char* egl_lib[] = {
  #if defined(BCMHOST)
 diff --git a/MobileGlues-cpp/glx/lookup.cpp b/MobileGlues-cpp/glx/lookup.cpp
-index 7d1ab77..8fb687c 100644
+index 7d1ab77..4a227dc 100644
 --- a/MobileGlues-cpp/glx/lookup.cpp
 +++ b/MobileGlues-cpp/glx/lookup.cpp
-@@ -69,4 +69,10 @@ void* glXGetProcAddress(const char* name) {
+@@ -48,6 +48,7 @@ std::string handle_multidraw_func_name(std::string name) {
+ }
+ 
+ void* glXGetProcAddress(const char* name) {
++    MG_LAZY_INIT()
+     LOG()
+     std::string real_func_name = handle_multidraw_func_name(std::string(name));
+ #ifdef __APPLE__
+@@ -69,4 +70,10 @@ void* glXGetProcAddress(const char* name) {
  
  void* glXGetProcAddressARB(const char* name) {
      return glXGetProcAddress(name);
@@ -200,15 +240,19 @@ index 7d1ab77..8fb687c 100644
 +#endif
 \ No newline at end of file
 diff --git a/MobileGlues-cpp/glx/lookup.h b/MobileGlues-cpp/glx/lookup.h
-index 0a24dc6..2d1ed27 100644
+index 0a24dc6..dd78a05 100644
 --- a/MobileGlues-cpp/glx/lookup.h
 +++ b/MobileGlues-cpp/glx/lookup.h
-@@ -17,6 +17,9 @@ extern "C"
+@@ -17,6 +17,13 @@ extern "C"
  
      GLAPI GLAPIENTRY void* glXGetProcAddress(const char* name);
      GLAPI GLAPIENTRY void* glXGetProcAddressARB(const char* name);
 +#ifdef MG_WINDOWS
 +    GLAPI void* GLAPIENTRY wglGetProcAddress(const char* name);
++    void mg_lazy_init(void);
++#define MG_LAZY_INIT() mg_lazy_init();
++#else
++#define MG_LAZY_INIT()
 +#endif
  
  #ifdef __cplusplus
@@ -229,3 +273,29 @@ index 8ec0d19..75e0011 100644
  #   define KHRONOS_APICALL __declspec(dllimport)
  #elif defined (__SYMBIAN32__)
  #   define KHRONOS_APICALL IMPORT_C
+diff --git a/MobileGlues-cpp/init.cpp b/MobileGlues-cpp/init.cpp
+index be5bc23..3aebd27 100644
+--- a/MobileGlues-cpp/init.cpp
++++ b/MobileGlues-cpp/init.cpp
+@@ -7,8 +7,19 @@
+ 
+ #include "includes.h"
+ 
++#ifdef MG_WINDOWS
++// On Windows this would run inside DllMain, under the loader lock, where
++// ANGLE can't bring up D3D11. Run it on the first EGL/GL entry instead.
++#include <mutex>
++
++extern "C" void mg_lazy_init(void) {
++    static std::once_flag once;
++    std::call_once(once, proc_init);
++}
++#else
+ struct static_block_t {
+     static_block_t() { proc_init(); }
+ };
+ 
+-static static_block_t static_block;
+\ No newline at end of file
++static static_block_t static_block;
++#endif
