@@ -1,0 +1,103 @@
+diff --git a/MobileGlues-cpp/CMakeLists.txt b/MobileGlues-cpp/CMakeLists.txt
+index 0426186..e8afe19 100644
+--- a/MobileGlues-cpp/CMakeLists.txt
++++ b/MobileGlues-cpp/CMakeLists.txt
+@@ -28,7 +28,9 @@ set(SPIRV_CROSS_ENABLE_UTIL    OFF CACHE BOOL "Disable util" FORCE)
+ add_subdirectory(3rdparty/glslang)
+ add_subdirectory(3rdparty/SPIRV-Cross)
+ 
+-if(MACOS)
++if(WIN32)
++    # windows / xbox uwp build (clang-cl), flags come from the command line
++elseif(MACOS)
+     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -w -fvisibility=default -funwind-tables -g -D_THREAD_SAFE -fPIC -stdlib=libc++")
+     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -w -g -std=gnu99 -funwind-tables -fvisibility=hidden")
+     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -static-libstdc++")
+@@ -39,7 +41,7 @@ else()
+     set(CMAKE_ANDROID_STL_TYPE c++_static)
+ endif()
+ 
+-if (NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
++if (NOT CMAKE_BUILD_TYPE STREQUAL "Debug" AND NOT WIN32)
+     # Check if ThinLTO or LTO is suppported
+     include(CheckIPOSupported)
+     include(CheckCCompilerFlag)
+@@ -138,7 +140,7 @@ target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE
+     spirv-cross-c
+ )
+ 
+-if (NOT MSVC)
++if (NOT MSVC AND NOT WIN32)
+     # Calls between this library's own translation units must land in this
+     # library. Without this, an internal call to an exported gl* symbol goes
+     # through a preemptible PLT slot, and in an Android app process the system
+@@ -152,7 +154,12 @@ if (NOT MSVC)
+     target_link_options(${CMAKE_PROJECT_NAME} PRIVATE -Wl,-Bsymbolic-functions)
+ endif()
+ 
+-if(MACOS)
++if(WIN32)
++    # windows / xbox: dlopen etc. from the compat folder, GLES/EGL loaded at runtime
++    target_sources(${CMAKE_PROJECT_NAME} PRIVATE ${MG_COMPAT_DIR}/dlfcn.cpp)
++    target_include_directories(${CMAKE_PROJECT_NAME} BEFORE PRIVATE ${MG_COMPAT_DIR})
++    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE MG_WINDOWS=1)
++elseif(MACOS)
+     # iOS
+     target_link_libraries(${CMAKE_PROJECT_NAME} PUBLIC
+         "-F${CMAKE_SOURCE_DIR}/external"
+diff --git a/MobileGlues-cpp/config/gpu_utils.cpp b/MobileGlues-cpp/config/gpu_utils.cpp
+index 51fa101..d87f21f 100644
+--- a/MobileGlues-cpp/config/gpu_utils.cpp
++++ b/MobileGlues-cpp/config/gpu_utils.cpp
+@@ -18,9 +18,15 @@ typedef const char* cstr;
+ // open_lib() below hands these to dlopen() verbatim, unlike the loader in gles/loader.cpp which appends a
+ // platform extension itself. Without the ".so" every dlopen here fails, getGPUInfo() returns an empty string
+ // and hasVulkan12() returns 0 on every device.
++#ifdef MG_WINDOWS
++static const cstr gles3_lib[] = {"libGLESv2.dll", nullptr};
++static const cstr egl_libs[] = {"libEGL.dll", nullptr};
++static const cstr vk_lib[] = {nullptr}; // no vulkan on the xbox
++#else
+ static const cstr gles3_lib[] = {"libGLESv3_CM.so", "libGLESv3.so", nullptr};
+ static const cstr egl_libs[] = {"libEGL.so", nullptr};
+ static const cstr vk_lib[] = {"libvulkan.so", nullptr};
++#endif
+ 
+ namespace egl_func {
+     PFNEGLGETDISPLAYPROC eglGetDisplay = nullptr;
+diff --git a/MobileGlues-cpp/gles/loader.cpp b/MobileGlues-cpp/gles/loader.cpp
+index 726ff47..eea4c8d 100644
+--- a/MobileGlues-cpp/gles/loader.cpp
++++ b/MobileGlues-cpp/gles/loader.cpp
+@@ -29,18 +29,31 @@ void *gles = nullptr, *egl = nullptr;
+ 
+ struct gles_func_t g_gles_func;
+ 
++#ifdef MG_WINDOWS
++static const char* path_prefix[] = {"", nullptr};
++#else
+ static const char* path_prefix[] = {
+     "", "/opt/vc/lib/", "/usr/local/lib/", "/usr/lib/", nullptr,
+ };
++#endif
+ 
++#ifdef MG_WINDOWS
++static const char* lib_ext[] = {"dll", nullptr};
++#else
+ static const char* lib_ext[] = {
+ #ifndef NO_GBM
+     "so.19",
+ #endif
+     "so",    "so.1", "so.2", "dylib", "dll", nullptr,
+ };
++#endif
+ 
++#ifdef MG_WINDOWS
++// windows / xbox: the GLES driver is ANGLE's libGLESv2.dll from the app package
++static const char* gles3_lib[] = {"libGLESv2", nullptr};
++#else
+ static const char* gles3_lib[] = {"libGLESv3_CM", "libGLESv3", nullptr};
++#endif
+ 
+ static const char* egl_lib[] = {
+ #if defined(BCMHOST)
