@@ -11,39 +11,43 @@ jobs:
     runs-on: windows-2025
     env:
       VCPKG_ROOT: C:\vcpkg-pinned
-      VCPKG_DEFAULT_BINARY_CACHE: C:\vcpkg-bincache
     steps:
       - uses: actions/checkout@v4
 
-      - name: Read vcpkg baseline
-        id: baseline
+      # angle only gets rebuilt when vcpkg.json changes
+      - name: Restore angle
+        id: angle
+        uses: actions/cache/restore@v4
+        with:
+          path: staging\vcpkg_installed
+          key: angle-x64-uwp-${{ hashFiles('vcpkg.json') }}
+
+      - name: Build angle
+        if: steps.angle.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
           $b = (Get-Content vcpkg.json -Raw | ConvertFrom-Json).'builtin-baseline'
-          "sha=$b" >> $env:GITHUB_OUTPUT
-
-      - name: Cache vcpkg binaries
-        uses: actions/cache@v4
-        with:
-          path: C:\vcpkg-bincache
-          key: vcpkg-x64-uwp-${{ hashFiles('vcpkg.json') }}
-
-      - name: Get vcpkg at the baseline
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null
           git clone --filter=tree:0 https://github.com/microsoft/vcpkg $env:VCPKG_ROOT
-          git -C $env:VCPKG_ROOT checkout ${{ steps.baseline.outputs.sha }}
+          git -C $env:VCPKG_ROOT checkout $b
           & "$env:VCPKG_ROOT\bootstrap-vcpkg.bat" -disableMetrics
-
-      - name: Build ANGLE (x64-uwp)
-        shell: pwsh
-        run: |
           & "$env:VCPKG_ROOT\vcpkg.exe" install --triplet x64-uwp --x-install-root=staging\vcpkg_installed
           if ($LASTEXITCODE -ne 0) { Get-ChildItem "$env:VCPKG_ROOT\buildtrees\angle" -Filter *.log -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "== $($_.Name)"; Get-Content $_.FullName -Tail 60 }; exit 1 }
-          Get-ChildItem -Recurse staging\vcpkg_installed\x64-uwp\bin, staging\vcpkg_installed\x64-uwp\lib | Select-Object -ExpandProperty FullName
 
-      - name: Build and pack the app
+      # saved right away so a broken app build doesnt throw away 20 min of angle
+      - name: Save angle
+        if: steps.angle.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: staging\vcpkg_installed
+          key: angle-x64-uwp-${{ hashFiles('vcpkg.json') }}
+
+      # so I can build the app on my own pc without vcpkg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: angle-x64-uwp
+          path: staging\vcpkg_installed\x64-uwp
+
+      - name: Build app
         shell: powershell
         run: .\build.ps1 -AngleDir staging\vcpkg_installed\x64-uwp -Version "0.1.${{ github.run_number }}.0"
 
