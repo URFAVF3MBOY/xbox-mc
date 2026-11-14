@@ -19,6 +19,7 @@
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
+#include <share.h>
 #include <string>
 
 using namespace winrt;
@@ -46,7 +47,8 @@ void OpenLog()
 {
     std::wstring dir{ Windows::Storage::ApplicationData::Current().LocalFolder().Path() };
     std::wstring path = dir + L"\\step1.log";
-    _wfopen_s(&g_log, path.c_str(), L"w");
+    // shared so device portal can read it while the app runs
+    g_log = _wfsopen(path.c_str(), L"w", _SH_DENYNO);
     LogLine("xbox-mc step 1 test");
 }
 
