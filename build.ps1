@@ -56,7 +56,14 @@ cl /nologo /std:c++20 /EHsc /O2 /MD /W3 /permissive- ^
   /I "$AngleDir\include" /I "$JavaDir\include" /Fo"$obj\\" ^
   "$root\host\main.cpp" ^
   /Fe"$exe" ^
-  /link /APPCONTAINER /SUBSYSTEM:WINDOWS /LIBPATH:"$AngleDir\lib" libEGL.lib libGLESv2.lib windowsapp.lib
+  /link /APPCONTAINER /SUBSYSTEM:WINDOWS /LIBPATH:"$AngleDir\lib" libEGL.lib libGLESv2.lib windowsapp.lib || exit /b 1
+rem my glfw3.dll, only needs the egl headers (it loads mobileglues at runtime)
+cl /nologo /std:c++20 /EHsc /O2 /MD /W3 /permissive- /LD ^
+  /DWINAPI_FAMILY=WINAPI_FAMILY_APP /DUNICODE /D_UNICODE /DNOMINMAX ^
+  /I "$AngleDir\include" /Fo"$obj\\" ^
+  "$root\glfw\glfw.cpp" ^
+  /Fe"$stage\glfw3.dll" ^
+  /link /APPCONTAINER /IMPLIB:"$obj\glfw3.lib" windowsapp.lib || exit /b 1
 "@ | Set-Content -Encoding ascii $bat
 cmd /c "`"$bat`""
 if ($LASTEXITCODE -ne 0) { throw "compile failed" }
@@ -70,12 +77,23 @@ else { Write-Warning "no -MobileGluesDll, the app will show blue" }
 # java: the jre keeps its own layout (jvm.dll finds java.home from where it is)
 Copy-Item -Recurse (Join-Path $JavaDir "jre") (Join-Path $stage "jre")
 Copy-Item -Recurse (Join-Path $JavaDir "classes") (Join-Path $stage "java")
+Copy-Item -Recurse (Join-Path $JavaDir "lib") (Join-Path $stage "lib")
+Copy-Item -Recurse (Join-Path $JavaDir "natives") (Join-Path $stage "natives")
 # jvm.dll needs the desktop vc runtime and the loader only looks in the
 # package root for it, not next to jvm.dll
 foreach ($d in @("vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll")) {
     Copy-Item (Join-Path $JavaDir "jre\bin\$d") $stage
 }
 # angle needs this to compile shaders
+# license texts that have to ship with the dlls (the jre has its own in jre\legal)
+$lic = Join-Path $stage "licenses"
+New-Item -ItemType Directory -Force $lic | Out-Null
+Copy-Item (Join-Path $root "licenses\*") $lic
+Copy-Item (Join-Path $root "mobileglues\LICENSE") (Join-Path $lic "MobileGlues.txt")
+foreach ($p in @("angle", "zlib")) {
+    $c = Join-Path $AngleDir "share\$p\copyright"
+    if (Test-Path $c) { Copy-Item $c (Join-Path $lic "$p.txt") }
+}
 $d3dc = Join-Path $kits "Redist\D3D\x64\d3dcompiler_47.dll"
 if (Test-Path $d3dc) { Copy-Item $d3dc $stage } else { Write-Warning "d3dcompiler_47.dll not found in the SDK redist" }
 
