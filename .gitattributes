@@ -1,0 +1,2 @@
+# patches have to stay exactly as written or git apply fails on actions
+*.patch -text
