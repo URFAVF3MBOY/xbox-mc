@@ -1,5 +1,5 @@
 # builds the app and makes a signed appx
-# .\build.ps1 -AngleDir staging\vcpkg_installed\x64-uwp
+# .\build.ps1 -AngleDir staging\vcpkg_installed\x64-uwp -MobileGluesDll staging\mg-build\mobileglues.dll
 # no -PfxPath = makes a new self-signed cert, install the .cer on the xbox too
 
 param(
@@ -8,7 +8,8 @@ param(
     [string] $Publisher = "CN=xbox-mc-dev",
     [string] $PfxPath = "",
     [string] $PfxPassword = "",
-    [string] $OutDir = "out"
+    [string] $OutDir = "out",
+    [string] $MobileGluesDll = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -59,6 +60,9 @@ if ($LASTEXITCODE -ne 0) { throw "compile failed" }
 # package folder
 # all of angle's dlls (libEGL, libGLESv2, libz)
 Copy-Item (Join-Path $AngleDir "bin\*.dll") $stage
+# mobileglues loads libEGL/libGLESv2 by name, so it sits right next to them
+if ($MobileGluesDll) { Copy-Item (Resolve-Path $MobileGluesDll).Path $stage }
+else { Write-Warning "no -MobileGluesDll, the app will show blue" }
 # angle needs this to compile shaders
 $d3dc = Join-Path $kits "Redist\D3D\x64\d3dcompiler_47.dll"
 if (Test-Path $d3dc) { Copy-Item $d3dc $stage } else { Write-Warning "d3dcompiler_47.dll not found in the SDK redist" }
