@@ -181,6 +181,38 @@ index 726ff47..eea4c8d 100644
  
  static const char* egl_lib[] = {
  #if defined(BCMHOST)
+diff --git a/MobileGlues-cpp/glx/lookup.cpp b/MobileGlues-cpp/glx/lookup.cpp
+index 7d1ab77..8fb687c 100644
+--- a/MobileGlues-cpp/glx/lookup.cpp
++++ b/MobileGlues-cpp/glx/lookup.cpp
+@@ -69,4 +69,10 @@ void* glXGetProcAddress(const char* name) {
+ 
+ void* glXGetProcAddressARB(const char* name) {
+     return glXGetProcAddress(name);
+-}
+\ No newline at end of file
++}
++
++#ifdef MG_WINDOWS
++void* GLAPIENTRY wglGetProcAddress(const char* name) {
++    return glXGetProcAddress(name);
++}
++#endif
+\ No newline at end of file
+diff --git a/MobileGlues-cpp/glx/lookup.h b/MobileGlues-cpp/glx/lookup.h
+index 0a24dc6..2d1ed27 100644
+--- a/MobileGlues-cpp/glx/lookup.h
++++ b/MobileGlues-cpp/glx/lookup.h
+@@ -17,6 +17,9 @@ extern "C"
+ 
+     GLAPI GLAPIENTRY void* glXGetProcAddress(const char* name);
+     GLAPI GLAPIENTRY void* glXGetProcAddressARB(const char* name);
++#ifdef MG_WINDOWS
++    GLAPI void* GLAPIENTRY wglGetProcAddress(const char* name);
++#endif
+ 
+ #ifdef __cplusplus
+ }
 diff --git a/MobileGlues-cpp/include/KHR/khrplatform.h b/MobileGlues-cpp/include/KHR/khrplatform.h
 index 8ec0d19..75e0011 100644
 --- a/MobileGlues-cpp/include/KHR/khrplatform.h
