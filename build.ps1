@@ -27,6 +27,8 @@ $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer
 $vsPath = & $vswhere -latest -prerelease -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
 if (-not $vsPath) { throw "Visual Studio with the x64 C++ tools not found" }
 $vcvars = Join-Path $vsPath "VC\Auxiliary\Build\vcvars64.bat"
+# vcvars calls vswhere and complains when its not on PATH
+$env:PATH = (Split-Path $vswhere) + ";" + $env:PATH
 
 $kits = Join-Path ${env:ProgramFiles(x86)} "Windows Kits\10"
 $sdkVer = (Get-ChildItem (Join-Path $kits "bin") -Directory |
@@ -55,11 +57,8 @@ cmd /c "`"$bat`""
 if ($LASTEXITCODE -ne 0) { throw "compile failed" }
 
 # package folder
-Copy-Item (Join-Path $AngleDir "bin\libEGL.dll"), (Join-Path $AngleDir "bin\libGLESv2.dll") $stage
-foreach ($extra in @("zlib1.dll", "z.dll")) {
-    $p = Join-Path $AngleDir "bin\$extra"
-    if (Test-Path $p) { Copy-Item $p $stage }
-}
+# all of angle's dlls (libEGL, libGLESv2, libz)
+Copy-Item (Join-Path $AngleDir "bin\*.dll") $stage
 # angle needs this to compile shaders
 $d3dc = Join-Path $kits "Redist\D3D\x64\d3dcompiler_47.dll"
 if (Test-Path $d3dc) { Copy-Item $d3dc $stage } else { Write-Warning "d3dcompiler_47.dll not found in the SDK redist" }
