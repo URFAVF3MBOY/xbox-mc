@@ -142,6 +142,42 @@ $jout = cmd /c "`"$javac`" -nowarn --patch-module `"java.base=$(Join-Path $psrc 
 if ($LASTEXITCODE -ne 0) { $jout | Write-Host; throw "jdk patch compile failed" }
 Write-Host "jdk patches: $((Get-ChildItem -Recurse $pout -Filter *.class).Count) classes"
 
+# my compat mod (compatmod\): mixins that make sodium work on the xbox one.
+# sodium and mixin are only needed to compile it, they don't go in the package
+function Get-Checked($url, $sha1, $file) {
+    if (-not (Test-Path $file) -or (Get-FileHash -Algorithm SHA1 $file).Hash.ToLower() -ne $sha1) {
+        Invoke-WebRequest -UseBasicParsing $url -OutFile $file
+        if ((Get-FileHash -Algorithm SHA1 $file).Hash.ToLower() -ne $sha1) { throw "sha1 mismatch for $url" }
+    }
+    return $file
+}
+$sodiumVer = "mc1.17.1-0.3.4"
+$versions = Invoke-RestMethod -UseBasicParsing -UserAgent "xbox-mc/0.1" "https://api.modrinth.com/v2/project/sodium/version"
+$sv = $versions | Where-Object { $_.version_number -eq $sodiumVer } | Select-Object -First 1
+if (-not $sv) { throw "sodium $sodiumVer not on modrinth" }
+$sf = $sv.files | Select-Object -First 1
+$sodiumJar = Get-Checked $sf.url $sf.hashes.sha1 (Join-Path $dl $sf.filename)
+$mixinVer = "0.17.5+mixin.0.8.7"
+$mixinUrl = "https://maven.fabricmc.net/net/fabricmc/sponge-mixin/$mixinVer/sponge-mixin-$mixinVer.jar"
+$mixinSha = ((Invoke-WebRequest -UseBasicParsing "$mixinUrl.sha1").Content)
+if ($mixinSha -is [byte[]]) { $mixinSha = [Text.Encoding]::ASCII.GetString($mixinSha) }
+$mixinJar = Get-Checked $mixinUrl $mixinSha.Trim().Split(" ")[0].ToLower() (Join-Path $dl "sponge-mixin-$mixinVer.jar")
+
+$cmSrc = Join-Path $root "compatmod"
+$cmOut = Join-Path $out "compatmod-classes"
+New-Item -ItemType Directory -Force $cmOut | Out-Null
+$cmCp = (@($sodiumJar, $mixinJar) + (Get-ChildItem $lib -Filter *.jar).FullName) -join ";"
+# -proc:none: the mixin jar brings an annotation processor (refmaps), not needed
+# here since nothing points at minecraft's own names
+& (Join-Path $Jdk "bin\javac.exe") -encoding UTF-8 --release 16 -proc:none -cp $cmCp -d $cmOut (Get-ChildItem -Recurse (Join-Path $cmSrc "src") -Filter *.java).FullName
+if ($LASTEXITCODE -ne 0) { throw "compat mod javac failed" }
+Copy-Item (Join-Path $cmSrc "resources\*") $cmOut
+$mods = Join-Path $out "mods"
+New-Item -ItemType Directory -Force $mods | Out-Null
+& (Join-Path $Jdk "bin\jar.exe") --create --file (Join-Path $mods "xbox-mc-compat.jar") -C $cmOut .
+if ($LASTEXITCODE -ne 0) { throw "compat mod jar failed" }
+Write-Host "compat mod: $((Get-Item (Join-Path $mods 'xbox-mc-compat.jar')).Length) bytes"
+
 $inc = Join-Path $out "include"
 New-Item -ItemType Directory -Force $inc | Out-Null
 Copy-Item (Join-Path $Jdk "include\jni.h") $inc

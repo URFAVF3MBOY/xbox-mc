@@ -80,6 +80,8 @@ Copy-Item -Recurse (Join-Path $JavaDir "classes") (Join-Path $stage "java")
 Copy-Item -Recurse (Join-Path $JavaDir "lib") (Join-Path $stage "lib")
 Copy-Item -Recurse (Join-Path $JavaDir "natives") (Join-Path $stage "natives")
 Copy-Item -Recurse (Join-Path $JavaDir "patch") (Join-Path $stage "patch")
+# my own mods that the launcher copies into game\mods (xbox-mc-compat)
+Copy-Item -Recurse (Join-Path $JavaDir "mods") (Join-Path $stage "mods")
 # jvm.dll needs the desktop vc runtime and the loader only looks in the
 # package root for it, not next to jvm.dll
 foreach ($d in @("vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll")) {

@@ -238,7 +238,7 @@ public class Launcher {
                     public void progress(int dn, int tt, long b) { done = dn; total = tt; bytes = b; }
                 }, log);
                 Fabric.Result fr = f.loader(VERSION);
-                f.mods(VERSION);
+                f.mods(VERSION, install);
                 fabric = fr;
             } catch (Exception e) {
                 e.printStackTrace(log);

@@ -1,0 +1,8 @@
+{
+  "required": false,
+  "minVersion": "0.8",
+  "package": "xbox_mc.compat",
+  "compatibilityLevel": "JAVA_16",
+  "client": [ "ShaderLoaderMixin", "ChunkShaderInterfaceMixin" ],
+  "injectors": { "defaultRequire": 1 }
+}

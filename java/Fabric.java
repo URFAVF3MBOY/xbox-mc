@@ -21,11 +21,11 @@ public final class Fabric {
     static final String MODRINTH = "https://api.modrinth.com/v2/project/";
 
     // the mods that get installed and kept up to date. all client side, about
-    // speed or memory, nothing that changes the game itself.
-    // no sodium: it needs uniform blocks, and the xbox one's gpu driver can't
-    // link shaders that use them (host/shadertest showed it). sodium extra and
-    // reese's need sodium
-    static final String[] MODS = { "fabric-api", "lithium", "lazydfu", "ferrite-core", "starlight", "entityculling" };
+    // speed, memory or settings, nothing that changes the game itself.
+    // sodium needs my xbox-mc-compat mod on the xbox one (its chunk shader uses a
+    // uniform block, the xbox one's gpu driver can't link those)
+    static final String[] MODS = { "fabric-api", "sodium", "sodium-extra", "reeses-sodium-options",
+            "lithium", "lazydfu", "ferrite-core", "starlight", "entityculling" };
 
     public static final class Result {
         public String mainClass;
@@ -79,10 +79,22 @@ public final class Fabric {
     }
 
     // installs/updates my mod list in game\mods. mods dropped in by hand stay
-    public void mods(String mc) throws Exception {
+    public void mods(String mc, Path install) throws Exception {
         ui.status("checking mods");
         Path dir = game.resolve("mods");
         Files.createDirectories(dir);
+
+        // my own mods ship with the app (install\mods), copied every start so
+        // they're always the version that belongs to this build
+        Path bundled = install.resolve("mods");
+        if (Files.isDirectory(bundled)) {
+            try (java.util.stream.Stream<Path> files = Files.list(bundled)) {
+                for (Path jar : (Iterable<Path>) files::iterator) {
+                    Files.copy(jar, dir.resolve(jar.getFileName()), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                    log.println("bundled mod " + jar.getFileName());
+                }
+            }
+        }
         Path listFile = dir.resolve(".xbox-mc-mods.json");
         Map<String, Object> installed = Files.exists(listFile)
                 ? Json.obj(Json.parse(Files.readString(listFile))) : new LinkedHashMap<>();

@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "id": "xbox-mc-compat",
+  "version": "0.1.0",
+  "name": "xbox-mc compat",
+  "description": "Fixes for running mods on the Xbox One. Makes Sodium's chunk shader work without uniform blocks.",
+  "license": "MIT",
+  "environment": "client",
+  "mixins": [ "xbox-mc-compat.mixins.json" ],
+  "depends": { "fabricloader": "*" }
+}
