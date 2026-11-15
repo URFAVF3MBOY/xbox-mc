@@ -3,7 +3,7 @@
 # output in staging\java:
 #   jre\       jlink runtime
 #   lib\       lwjgl jars
-#   natives\   lwjgl.dll, lwjgl_opengl.dll (glfw is my own glfw3.dll, not lwjgl's)
+#   natives\   lwjgl natives (glfw is my own glfw3.dll, not lwjgl's)
 #   classes\   test classes
 #   include\   jni headers for the host
 
@@ -62,7 +62,8 @@ New-Item -ItemType Directory -Force $lib, $natives | Out-Null
 foreach ($a in @("lwjgl", "lwjgl-glfw", "lwjgl-opengl")) { Copy-Item (Get-Jar $a "") $lib }
 
 Add-Type -AssemblyName System.IO.Compression.FileSystem
-foreach ($a in @("lwjgl", "lwjgl-opengl")) {
+# minecraft also wants stb (textures), openal (sound), tinyfd and jemalloc
+foreach ($a in @("lwjgl", "lwjgl-opengl", "lwjgl-stb", "lwjgl-openal", "lwjgl-tinyfd", "lwjgl-jemalloc")) {
     $zip = [IO.Compression.ZipFile]::OpenRead((Get-Jar $a "natives-windows"))
     try {
         foreach ($e in $zip.Entries) {
@@ -80,6 +81,42 @@ $classes = Join-Path $out "classes"
 $cp = (Get-ChildItem $lib -Filter *.jar).FullName -join ";"
 & (Join-Path $Jdk "bin\javac.exe") -encoding UTF-8 -cp $cp -d $classes (Get-ChildItem $here -Filter *.java).FullName
 if ($LASTEXITCODE -ne 0) { throw "javac failed" }
+
+# jdk fixes for the app sandbox (patches in java\jdk-patches, against the jdk's
+# own src.zip). toRealPath walks every folder from C:\ and the sandbox can't look
+# into C:\Users\<me>. the classes get loaded with --patch-module java.base
+$psrc = Join-Path $out "jdk-src"
+$pout = Join-Path $out "patch\java.base"
+New-Item -ItemType Directory -Force $psrc, $pout | Out-Null
+$srcZip = [IO.Compression.ZipFile]::OpenRead((Join-Path $Jdk "lib\src.zip"))
+$patched = @()
+try {
+    foreach ($p in Get-ChildItem (Join-Path $here "jdk-patches") -Filter *.patch) {
+        foreach ($f in (Select-String -Path $p.FullName -Pattern '^\+\+\+ b/(.+)$').Matches) {
+            $rel = $f.Groups[1].Value
+            $dest = Join-Path $psrc $rel
+            New-Item -ItemType Directory -Force (Split-Path $dest) | Out-Null
+            [IO.Compression.ZipFileExtensions]::ExtractToFile($srcZip.GetEntry($rel), $dest, $true)
+            $patched += $dest
+        }
+    }
+} finally { $srcZip.Dispose() }
+$git = (Get-Command git.exe -All | Where-Object { $_.Source -like "*.exe" } | Select-Object -First 1).Source
+# jdk-src sits inside this repo, so git apply needs --directory (from the repo
+# root), otherwise it quietly skips the file
+foreach ($p in Get-ChildItem (Join-Path $here "jdk-patches") -Filter *.patch) {
+    Push-Location $root
+    & $git apply --whitespace=nowarn --directory=staging/java/jdk-src $p.FullName
+    $ok = $LASTEXITCODE -eq 0
+    Pop-Location
+    if (-not $ok) { throw "jdk patch $($p.Name) failed" }
+}
+foreach ($f in $patched) {
+    if (-not (Select-String -Path $f -SimpleMatch "xbox-mc" -Quiet)) { throw "jdk patch didn't change $f" }
+}
+& (Join-Path $Jdk "bin\javac.exe") --patch-module "java.base=$(Join-Path $psrc 'java.base')" -d $pout $patched
+if ($LASTEXITCODE -ne 0) { throw "jdk patch compile failed" }
+Write-Host "jdk patches: $((Get-ChildItem -Recurse $pout -Filter *.class).Count) classes"
 
 $inc = Join-Path $out "include"
 New-Item -ItemType Directory -Force $inc | Out-Null

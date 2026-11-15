@@ -1,0 +1,20 @@
+diff --git a/java.base/sun/nio/fs/WindowsLinkSupport.java b/java.base/sun/nio/fs/WindowsLinkSupport.java
+index 864663a..570c39d 100644
+--- a/java.base/sun/nio/fs/WindowsLinkSupport.java
++++ b/java.base/sun/nio/fs/WindowsLinkSupport.java
+@@ -255,7 +255,14 @@ class WindowsLinkSupport {
+                     sb.append('\\');
+                 }
+             } catch (WindowsException e) {
+-                e.rethrowAsIOException(path);
++                // xbox-mc: the uwp app sandbox can't list some parent folders
++                // (C:\Users\<name>), keep that part as written instead of failing
++                if (e.lastError() != ERROR_ACCESS_DENIED)
++                    e.rethrowAsIOException(path);
++                sb.append(path, curr, end);
++                if (next != -1) {
++                    sb.append('\\');
++                }
+             }
+             curr = end + 1;
+         }
