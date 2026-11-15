@@ -86,9 +86,26 @@ std::string Narrow(std::wstring const& w)
 void OpenLog()
 {
     std::wstring path = LocalDir() + L"\\host.log";
+    // keep the last run's logs (a crash that kills the whole app leaves no other trace)
+    for (auto name : { L"host", L"launcher" }) {
+        std::wstring cur = LocalDir() + L"\\" + name + L".log";
+        std::wstring prev = LocalDir() + L"\\" + name + L".prev.log";
+        DeleteFileW(prev.c_str());
+        MoveFileExW(cur.c_str(), prev.c_str(), 0);
+    }
     // shared so device portal can read it while the app runs
     g_log = _wfsopen(path.c_str(), L"w", _SH_DENYNO);
-    LogLine("xbox-mc step 4 test");
+    LogLine("xbox-mc host");
+
+    // memory use every 10 s, the xbox kills apps that go over their limit
+    std::thread([] {
+        for (;;) {
+            Sleep(10000);
+            uint64_t used = Windows::System::MemoryManager::AppMemoryUsage();
+            uint64_t limit = Windows::System::MemoryManager::AppMemoryUsageLimit();
+            LogLine("mem: %llu MB of %llu MB", used >> 20, limit >> 20);
+        }
+    }).detach();
 }
 
 // ---- glfw3.dll ----
@@ -271,7 +288,9 @@ void RunJava()
         "-Djna.tmpdir=" + tmp,
         "-Djna.boot.library.path=" + install + "\\natives",
         "-Djna.nounpack=true",
-        "-Xmx2560m",
+        // 2 gb heap max: the xbox kills the app over 5 gb in total, and the jvm,
+        // mobileglues, angle and textures need room next to the heap
+        "-Xmx2048m",
         "-XX:+DisableExplicitGC",
         // no shared memory perf file, it wants a desktop temp dir
         "-XX:-UsePerfData",
@@ -289,7 +308,7 @@ void RunJava()
     std::vector<std::string> extra;
     // gc flags. LocalState\jvm.txt (one flag per line) replaces the defaults,
     // so gc setups can be compared without a new build
-    std::vector<std::string> gcFlags = { "-Xms2560m", "-XX:+UseG1GC", "-XX:MaxGCPauseMillis=30",
+    std::vector<std::string> gcFlags = { "-Xms1024m", "-XX:+UseG1GC", "-XX:MaxGCPauseMillis=30",
                                          "-XX:+ParallelRefProcEnabled" };
     {
         FILE* jf = nullptr;

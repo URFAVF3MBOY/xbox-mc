@@ -23,6 +23,8 @@ std::vector<LogFile> ListLogs()
         { "host.log", "host.log" },
         { "glfw.log", "glfw.log" },
         { "xbox.jfr", "xbox.jfr" },
+        { "host.prev.log", "host.prev.log" },
+        { "launcher.prev.log", "launcher.prev.log" },
         { "mobileglues.log", "MG\\latest.log" },
     };
     for (auto& f : fixed) {
