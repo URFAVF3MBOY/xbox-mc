@@ -24,6 +24,7 @@ public class Launcher {
     static volatile String status = "starting";
     static volatile String codeUrl, code;
     static volatile String error;
+    static volatile String logUrl;    // the host's log web server, from logurl.txt
     static volatile String player;
     static volatile int done, total;
     static volatile long bytes;
@@ -58,8 +59,16 @@ public class Launcher {
         GLFWGamepadState pad = GLFWGamepadState.malloc();
 
         double readyAt = -1;
+        int frame = 0;
         while (!glfwWindowShouldClose(window)) {
             glfwPollEvents();
+            if (logUrl == null && frame++ % 60 == 0) {
+                try {
+                    logUrl = java.nio.file.Files.readString(local.resolve("logurl.txt")).trim();
+                } catch (Exception e) {
+                    // the host hasn't written it (yet)
+                }
+            }
             // show the green "downloaded" screen for a moment, then start the game
             if (finished && files != null) {
                 if (readyAt < 0) readyAt = glfwGetTime();
@@ -124,6 +133,9 @@ public class Launcher {
                     y += s * 12;
                 }
             }
+            if (logUrl != null) {
+                Font.center(q, "LOGS: " + logUrl, cx, h - s * 16, s * 0.8f, 0.5f, 0.5f, 0.55f);
+            }
 
             glUseProgram(program);
             glUniform2f(screen, w, h);
@@ -155,6 +167,8 @@ public class Launcher {
     // and its libraries through java.class.path, so that gets set to the same jars.
     static void startGame(Path local, Auth.Account a, Downloader.Result r, Fabric.Result fab) throws Exception {
         Path game = local.resolve("game");
+        // some mods (ferritecore) write config\... before anything made the folder
+        java.nio.file.Files.createDirectories(game.resolve("config"));
         java.util.List<Path> jars = new java.util.ArrayList<>();
         if (fab != null) jars.addAll(fab.libraries);
         for (Path lib : r.libraries) {
