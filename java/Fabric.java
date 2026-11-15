@@ -170,10 +170,45 @@ public final class Fabric {
                 "entityShadows:false",
                 "biomeBlendRadius:0",
                 "mipmapLevels:0",
-                "maxFps:60",
-                "enableVsync:true",
+                "maxFps:260",
+                "enableVsync:false",
                 "entityDistanceScaling:0.75",
                 "") );
+    }
+
+    // one time changes for installs from before they were the default, done once
+    // (marker file), after that the settings belong to the player again:
+    // - sodium block face culling off: with xbox-mc-compat every chunk is then one
+    //   draw call instead of up to 7 (much less cpu on the xbox, gpu has room)
+    // - no 60 fps cap and no vsync (the first-start defaults had both)
+    public static void tuneSettingsOnce(Path game, java.io.PrintStream log) {
+        Path marker = game.resolve(".xbox-mc-tuned-1");
+        if (Files.exists(marker)) return;
+        try {
+            Path sodium = game.resolve("config/sodium-options.json");
+            Map<String, Object> root = Files.exists(sodium) ? Json.obj(Json.parse(Files.readString(sodium))) : new LinkedHashMap<>();
+            Object perf = root.get("performance");
+            Map<String, Object> p = perf == null ? new LinkedHashMap<>() : Json.obj(perf);
+            p.put("use_block_face_culling", Boolean.FALSE);
+            root.put("performance", p);
+            Files.createDirectories(sodium.getParent());
+            Files.writeString(sodium, Json.write(root));
+
+            Path options = game.resolve("options.txt");
+            if (Files.exists(options)) {
+                List<String> lines = new ArrayList<>();
+                for (String l : Files.readAllLines(options)) {
+                    if (l.startsWith("maxFps:")) l = "maxFps:260";
+                    else if (l.startsWith("enableVsync:")) l = "enableVsync:false";
+                    lines.add(l);
+                }
+                Files.write(options, lines);
+            }
+            Files.writeString(marker, "done\n");
+            log.println("settings tuned once: no block face culling, no fps cap, no vsync");
+        } catch (Exception e) {
+            log.println("couldn't tune settings: " + e);
+        }
     }
 
     static String mavenPath(String coords) {

@@ -239,6 +239,7 @@ public class Launcher {
                 }, log);
                 Fabric.Result fr = f.loader(VERSION);
                 f.mods(VERSION, install);
+                Fabric.tuneSettingsOnce(local.resolve("game"), log);
                 fabric = fr;
             } catch (Exception e) {
                 e.printStackTrace(log);
