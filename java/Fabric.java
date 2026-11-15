@@ -182,6 +182,7 @@ public final class Fabric {
     //   draw call instead of up to 7 (much less cpu on the xbox, gpu has room)
     // - no 60 fps cap and no vsync (the first-start defaults had both)
     public static void tuneSettingsOnce(Path game, java.io.PrintStream log) {
+        tuneCullingOnce(game, log);
         Path marker = game.resolve(".xbox-mc-tuned-1");
         if (Files.exists(marker)) return;
         try {
@@ -208,6 +209,28 @@ public final class Fabric {
             log.println("settings tuned once: no block face culling, no fps cap, no vsync");
         } catch (Exception e) {
             log.println("couldn't tune settings: " + e);
+        }
+    }
+
+    // entityculling re-traces every entity every 10 ms on its own thread, which
+    // kept a whole jaguar core busy on the xbox. 40 ms still looks fine.
+    // the mod writes its config on the first start, so this waits until it's there.
+    static void tuneCullingOnce(Path game, java.io.PrintStream log) {
+        Path marker = game.resolve(".xbox-mc-tuned-2");
+        Path cfg = game.resolve("config/entityculling.json");
+        if (Files.exists(marker) || !Files.exists(cfg)) return;
+        try {
+            Map<String, Object> root = Json.obj(Json.parse(Files.readString(cfg)));
+            // my json parser reads every number as a double, keep whole ones whole
+            for (Map.Entry<String, Object> e : root.entrySet()) {
+                if (e.getValue() instanceof Double d && d == Math.rint(d)) e.setValue(d.longValue());
+            }
+            root.put("sleepDelay", 40L);
+            Files.writeString(cfg, Json.write(root));
+            Files.writeString(marker, "done\n");
+            log.println("settings tuned once: entityculling sleepDelay 40");
+        } catch (Exception e) {
+            log.println("couldn't tune entityculling: " + e);
         }
     }
 
