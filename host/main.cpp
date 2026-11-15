@@ -418,6 +418,19 @@ struct App : implements<App, IFrameworkViewSource, IFrameworkView> {
         std::string mgDir = Narrow(LocalDir() + L"\\MG");
         CreateDirectoryA(mgDir.c_str(), nullptr);
         _putenv_s("MG_DIR_PATH", mgDir.c_str());
+        // mobileglues settings, only if there's no config yet. enableNoError 2:
+        // when a shader program doesn't link it logs the real reason (its other
+        // error logging is compiled out) and lets it through instead of crashing
+        std::string mgConfig = mgDir + "\\config.json";
+        if (GetFileAttributesA(mgConfig.c_str()) == INVALID_FILE_ATTRIBUTES) {
+            FILE* f = nullptr;
+            if (fopen_s(&f, mgConfig.c_str(), "w") == 0 && f) {
+                fputs("{\"enableANGLE\":0,\"enableNoError\":2,\"enableExtComputeShader\":0,\"enableExtTimerQuery\":0,"
+                      "\"enableExtDirectStateAccess\":0,\"maxGlslCacheSize\":0,\"angleDepthClearFixMode\":0,"
+                      "\"customGLVersion\":40,\"fsr1Setting\":0,\"hideMGEnvLevel\":0}\n", f);
+                fclose(f);
+            }
+        }
 
         DeleteFileW((LocalDir() + L"\\logurl.txt").c_str());
         StartLogServer();
