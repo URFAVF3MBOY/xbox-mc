@@ -25,7 +25,9 @@
 #include <EGL/eglext_angle.h>
 
 #include <atomic>
+#include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <condition_variable>
 #include <functional>
 #include <cstdarg>
@@ -543,6 +545,202 @@ bool ReadPad(int jid, GLFWgamepadstate* out)
     return true;
 }
 
+// ---- controller as keyboard + mouse ----
+// minecraft java has no controller support, so the first pad gets turned into
+// the keys and mouse buttons minecraft already knows. in game (cursor captured)
+// the right stick looks around, in menus the sticks move a cursor that
+// glfwSwapBuffers draws, because the xbox has no mouse cursor.
+namespace pad {
+enum : int {
+    K_SPACE = 32, K_A = 65, K_D = 68, K_E = 69, K_F = 70, K_Q = 81, K_S = 83, K_T = 84, K_W = 87,
+    K_ESCAPE = 256, K_TAB = 258, K_RIGHT = 262, K_LEFT = 263, K_DOWN = 264, K_UP = 265,
+    K_F5 = 294, K_LSHIFT = 340, K_LCTRL = 341,
+};
+constexpr int kMouse = 400;     // slots from here on are mouse buttons 0..2
+constexpr int kSlots = kMouse + 3;
+bool g_sent[kSlots] = {};       // what minecraft was told is held right now
+bool g_prevLb = false, g_prevRb = false;
+bool g_mouseUsed = false;       // a real mouse moved, then my cursor stays hidden
+bool g_showCursor = false;
+std::chrono::steady_clock::time_point g_last{};
+
+float Curve(float v)
+{
+    float a = fabsf(v);
+    if (a < 0.15f) return 0.0f;
+    float t = (a - 0.15f) / 0.85f;
+    return (v < 0 ? -t : t) * t;   // slow near the middle, fast at the edge
+}
+}
+
+void PadInput(Window* win)
+{
+    using namespace pad;
+    GLFWgamepadstate s{};
+    if (!win || !ReadPad(0, &s)) {
+        g_showCursor = false;
+        return;
+    }
+    auto now = std::chrono::steady_clock::now();
+    double dt = g_last.time_since_epoch().count() ? std::chrono::duration<double>(now - g_last).count() : 0.0;
+    g_last = now;
+    if (dt > 0.1) dt = 0.1;
+
+    auto gw = reinterpret_cast<GLFWwindow*>(win);
+    auto btn = [&](int b) { return s.buttons[b] == GLFW_PRESS; };
+    float lx = s.axes[0], ly = s.axes[1], rx = s.axes[2], ry = s.axes[3];
+    bool lt = s.axes[4] > -0.4f, rt = s.axes[5] > -0.4f;
+    bool inGame = win->cursorMode == GLFW_CURSOR_DISABLED;
+
+    bool want[kSlots] = {};
+    if (inGame) {
+        want[K_W] = ly < -0.35f;
+        want[K_S] = ly > 0.35f;
+        want[K_A] = lx < -0.35f;
+        want[K_D] = lx > 0.35f;
+        want[K_SPACE] = btn(0);       // A jump
+        want[K_LSHIFT] = btn(1);      // B sneak
+        want[K_E] = btn(2);           // X inventory
+        want[K_F5] = btn(3);          // Y camera
+        want[K_TAB] = btn(6);         // view: player list
+        want[K_ESCAPE] = btn(7);      // menu: pause
+        want[K_LCTRL] = btn(9);       // L3 sprint
+        want[kMouse + 2] = btn(10);   // R3 pick block
+        want[K_T] = btn(11);          // dpad up: chat
+        want[K_Q] = btn(13);          // dpad down: drop
+        want[K_F] = btn(14);          // dpad left: swap hands
+        want[kMouse + 0] = rt;        // attack / break
+        want[kMouse + 1] = lt;        // use / place
+        float speed = 1100.0f * static_cast<float>(dt);
+        double dx = Curve(rx) * speed, dy = Curve(ry) * speed;
+        if (dx != 0 || dy != 0) {
+            win->cursorX += dx;
+            win->cursorY += dy;
+            if (win->cursorCb) win->cursorCb(gw, win->cursorX, win->cursorY);
+        }
+    } else {
+        want[kMouse + 0] = btn(0);                 // A click
+        want[kMouse + 1] = btn(2);                 // X right click
+        want[K_LSHIFT] = btn(3);                   // Y hold for shift click
+        want[K_ESCAPE] = btn(1) || btn(7);         // B / menu: back
+        want[K_UP] = btn(11);
+        want[K_RIGHT] = btn(12);
+        want[K_DOWN] = btn(13);
+        want[K_LEFT] = btn(14);
+        int sw = 0, sh = 0;
+        SurfaceSize(win, &sw, &sh);
+        float speed = sh * 1.1f * static_cast<float>(dt);
+        double dx = (Curve(lx) + Curve(rx)) * speed, dy = (Curve(ly) + Curve(ry)) * speed;
+        if (dx != 0 || dy != 0) {
+            win->cursorX = (std::min)((std::max)(win->cursorX + dx, 0.0), sw - 1.0);
+            win->cursorY = (std::min)((std::max)(win->cursorY + dy, 0.0), sh - 1.0);
+            if (win->cursorCb) win->cursorCb(gw, win->cursorX, win->cursorY);
+            g_mouseUsed = false;
+        }
+        if (btn(0) || btn(2)) g_mouseUsed = false;
+    }
+    g_showCursor = !inGame && !g_mouseUsed;
+
+    // bumpers scroll: hotbar in game, lists in menus
+    bool lb = btn(4), rb = btn(5);
+    if (win->scrollCb) {
+        if (lb && !g_prevLb) win->scrollCb(gw, 0.0, 1.0);
+        if (rb && !g_prevRb) win->scrollCb(gw, 0.0, -1.0);
+    }
+    g_prevLb = lb;
+    g_prevRb = rb;
+
+    // keys first, so shift is already down when a shift click comes
+    int mods = want[K_LSHIFT] ? GLFW_MOD_SHIFT : 0;
+    for (int k = 0; k < kMouse; k++) {
+        if (want[k] == g_sent[k]) continue;
+        g_sent[k] = want[k];
+        int action = want[k] ? GLFW_PRESS : GLFW_RELEASE;
+        win->keys[k] = static_cast<char>(action);
+        if (win->keyCb) win->keyCb(gw, k, 0, action, mods);
+    }
+    for (int b = 0; b < 3; b++) {
+        if (want[kMouse + b] == g_sent[kMouse + b]) continue;
+        g_sent[kMouse + b] = want[kMouse + b];
+        int action = want[kMouse + b] ? GLFW_PRESS : GLFW_RELEASE;
+        win->buttons[b] = static_cast<char>(action);
+        if (win->buttonCb) win->buttonCb(gw, b, action, mods);
+    }
+}
+
+// the menu cursor, drawn with scissored clears right before the swap so none of
+// minecraft's gl state gets touched (everything changed is put back)
+void DrawPadCursor(Window* win)
+{
+    if (!pad::g_showCursor || !win || win->cursorMode == GLFW_CURSOR_DISABLED || !g_egl.GlProc) return;
+    using GetIv = void(APIENTRY*)(unsigned, int*);
+    using GetFv = void(APIENTRY*)(unsigned, float*);
+    using GetBv = void(APIENTRY*)(unsigned, unsigned char*);
+    using IsEn = unsigned char(APIENTRY*)(unsigned);
+    using En = void(APIENTRY*)(unsigned);
+    using Sc = void(APIENTRY*)(int, int, int, int);
+    using Cc = void(APIENTRY*)(float, float, float, float);
+    using Cl = void(APIENTRY*)(unsigned);
+    using Cm = void(APIENTRY*)(unsigned char, unsigned char, unsigned char, unsigned char);
+    using Bf = void(APIENTRY*)(unsigned, unsigned);
+    static GetIv getIv; static GetFv getFv; static GetBv getBv; static IsEn isEn;
+    static En enable, disable; static Sc scissor; static Cc clearColor; static Cl clear;
+    static Cm colorMask; static Bf bindFb;
+    static bool ok = false, tried = false;
+    if (!tried) {
+        tried = true;
+        auto p = [](const char* n) { return reinterpret_cast<void*>(g_egl.GlProc(n)); };
+        getIv = (GetIv)p("glGetIntegerv"); getFv = (GetFv)p("glGetFloatv"); getBv = (GetBv)p("glGetBooleanv");
+        isEn = (IsEn)p("glIsEnabled"); enable = (En)p("glEnable"); disable = (En)p("glDisable");
+        scissor = (Sc)p("glScissor"); clearColor = (Cc)p("glClearColor"); clear = (Cl)p("glClear");
+        colorMask = (Cm)p("glColorMask"); bindFb = (Bf)p("glBindFramebuffer");
+        ok = getIv && getFv && getBv && isEn && enable && disable && scissor && clearColor && clear && colorMask && bindFb;
+        Log("pad cursor: %s", ok ? "ready" : "gl functions missing");
+    }
+    if (!ok) return;
+
+    const unsigned SCISSOR_TEST = 0x0C11, SCISSOR_BOX = 0x0C10, CLEAR_VALUE = 0x0C22, WRITEMASK = 0x0C23,
+                   DRAW_FB_BINDING = 0x8CA6, DRAW_FB = 0x8CA9, COLOR_BIT = 0x4000;
+    unsigned char hadScissor = isEn(SCISSOR_TEST);
+    int box[4], fb = 0;
+    float cc[4];
+    unsigned char mask[4];
+    getIv(SCISSOR_BOX, box);
+    getFv(CLEAR_VALUE, cc);
+    getBv(WRITEMASK, mask);
+    getIv(DRAW_FB_BINDING, &fb);
+
+    int sw = 0, sh = 0;
+    SurfaceSize(win, &sw, &sh);
+    bindFb(DRAW_FB, 0);
+    enable(SCISSOR_TEST);
+    colorMask(1, 1, 1, 1);
+    static const char* arrow[] = {
+        "X          ", "XX         ", "X.X        ", "X..X       ", "X...X      ", "X....X     ",
+        "X.....X    ", "X......X   ", "X.......X  ", "X....XXXXX ", "X.XX.X     ", "XX  X.X    ",
+        "     X.X   ", "      XX   ",
+    };
+    int px = (std::max)(2, sh / 300);
+    int x0 = static_cast<int>(win->cursorX), y0 = static_cast<int>(win->cursorY);
+    for (int pass = 0; pass < 2; pass++) {
+        char want = pass == 0 ? 'X' : '.';
+        float c = pass == 0 ? 0.0f : 1.0f;
+        clearColor(c, c, c, 1.0f);
+        for (int row = 0; row < 14; row++) {
+            for (int col = 0; arrow[row][col]; col++) {
+                if (arrow[row][col] != want) continue;
+                scissor(x0 + col * px, sh - (y0 + (row + 1) * px), px, px);
+                clear(COLOR_BIT);
+            }
+        }
+    }
+    bindFb(DRAW_FB, static_cast<unsigned>(fb));
+    scissor(box[0], box[1], box[2], box[3]);
+    clearColor(cc[0], cc[1], cc[2], cc[3]);
+    colorMask(mask[0], mask[1], mask[2], mask[3]);
+    if (!hadScissor) disable(SCISSOR_TEST);
+}
+
 // ---- time ----
 LARGE_INTEGER g_freq{}, g_base{};
 
@@ -577,6 +775,7 @@ void DispatchEvents()
         case Ev::Move:
             if (win->cursorMode == GLFW_CURSOR_DISABLED) break;
             if (e.x == win->cursorX && e.y == win->cursorY) break;
+            pad::g_mouseUsed = true;
             win->cursorX = e.x;
             win->cursorY = e.y;
             if (win->cursorCb) win->cursorCb(gw, e.x, e.y);
@@ -1140,6 +1339,7 @@ API void glfwPollEvents(void)
     REQUIRE_INIT(void())
     RefreshPads();
     DispatchEvents();
+    PadInput(g_main);
 }
 
 API void glfwWaitEventsTimeout(double timeout)
@@ -1368,6 +1568,7 @@ API GLFWwindow* glfwGetCurrentContext(void) { return reinterpret_cast<GLFWwindow
 
 API void glfwSwapBuffers(GLFWwindow* w)
 {
+    if (W(w) == g_main) DrawPadCursor(g_main);
     if (!g_egl.SwapBuffers(g_egl.display, W(w)->surface)) {
         SetError(GLFW_PLATFORM_ERROR, "eglSwapBuffers failed (0x%x)", g_egl.GetError());
     }
