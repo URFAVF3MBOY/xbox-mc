@@ -272,6 +272,16 @@ void RunJava()
         "-Djna.boot.library.path=" + install + "\\natives",
         "-Djna.nounpack=true",
         "-Xmx2560m",
+        // same min as max: no heap resizing while playing. g1 with short pauses
+        // and a bigger young gen, minecraft makes lots of short lived garbage
+        "-Xms2560m",
+        "-XX:+UseG1GC",
+        "-XX:MaxGCPauseMillis=30",
+        "-XX:+UnlockExperimentalVMOptions",
+        "-XX:G1NewSizePercent=30",
+        "-XX:G1ReservePercent=15",
+        "-XX:+ParallelRefProcEnabled",
+        "-XX:+DisableExplicitGC",
         // no shared memory perf file, it wants a desktop temp dir
         "-XX:-UsePerfData",
         "-XX:ErrorFile=" + local + "\\hs_err_pid%p.log",
@@ -419,6 +429,11 @@ struct App : implements<App, IFrameworkViewSource, IFrameworkView> {
         std::string mgDir = Narrow(LocalDir() + L"\\MG");
         CreateDirectoryA(mgDir.c_str(), nullptr);
         _putenv_s("MG_DIR_PATH", mgDir.c_str());
+        // no-error gl context, switched on the log server's settings page
+        if (GetFileAttributesW((LocalDir() + L"\\noerror.on").c_str()) != INVALID_FILE_ATTRIBUTES) {
+            _putenv_s("XMC_NO_ERROR", "1");
+            LogLine("no-error gl context: on");
+        }
         // mobileglues settings, only if there's no config yet. enableNoError 2:
         // when a shader program doesn't link it logs the real reason (its other
         // error logging is compiled out) and lets it through instead of crashing
