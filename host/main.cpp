@@ -9,7 +9,12 @@
 #include <winrt/Windows.ApplicationModel.h>
 #include <winrt/Windows.ApplicationModel.Core.h>
 #include <winrt/Windows.Foundation.h>
+#include <winrt/Windows.Foundation.Collections.h>
+#include <winrt/Windows.Networking.h>
+#include <winrt/Windows.Networking.Connectivity.h>
+#include <winrt/Windows.Networking.Sockets.h>
 #include <winrt/Windows.Storage.h>
+#include <winrt/Windows.Storage.Streams.h>
 #include <winrt/Windows.System.h>
 #include <winrt/Windows.UI.Core.h>
 
@@ -21,13 +26,17 @@
 #include <GLES2/gl2.h>
 #include <jni.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
+#include <regex>
 #include <share.h>
 #include <string>
+#include <thread>
 #include <vector>
 
 using namespace winrt;
@@ -70,6 +79,8 @@ std::string Narrow(std::wstring const& w)
     if (n > 1) WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, s.data(), n, nullptr, nullptr);
     return s;
 }
+
+#include "logserver.h"
 
 void OpenLog()
 {
@@ -154,8 +165,23 @@ jint JNICALL JvmVfprintf(FILE*, const char* fmt, va_list args)
     return n;
 }
 
-void JNICALL JvmExit(jint code) { LogLine("jvm: exit(%d)", code); }
-void JNICALL JvmAbort() { LogLine("jvm: abort"); }
+// when java crashes (exit code != 0, or abort) the process would just vanish,
+// and the log server with it. so the calling thread waits here forever and the
+// app stays open until it gets closed. a normal quit (exit 0) still closes it.
+void JNICALL JvmExit(jint code)
+{
+    LogLine("jvm: exit(%d)", code);
+    if (code != 0) {
+        LogLine("java crashed, keeping the app open so the logs can be read");
+        Sleep(INFINITE);
+    }
+}
+
+void JNICALL JvmAbort()
+{
+    LogLine("jvm: abort, keeping the app open so the logs can be read");
+    Sleep(INFINITE);
+}
 
 std::string ExceptionText(JNIEnv* env)
 {
@@ -392,6 +418,9 @@ struct App : implements<App, IFrameworkViewSource, IFrameworkView> {
         std::string mgDir = Narrow(LocalDir() + L"\\MG");
         CreateDirectoryA(mgDir.c_str(), nullptr);
         _putenv_s("MG_DIR_PATH", mgDir.c_str());
+
+        DeleteFileW((LocalDir() + L"\\logurl.txt").c_str());
+        StartLogServer();
 
         bool glfwOk = AttachGlfw(m_window);
         if (glfwOk) StartJava();

@@ -37,5 +37,7 @@
 
   <Capabilities>
     <Capability Name="internetClient" />
+    <!-- the log web server on the home network -->
+    <Capability Name="privateNetworkClientServer" />
   </Capabilities>
 </Package>
