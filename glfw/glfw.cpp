@@ -586,6 +586,67 @@ float Curve(float v)
 }
 }
 
+// ---- perf stats ----
+// every 5 s: fps, cpu ms (time between swaps = minecraft + java + translation)
+// and swap ms (time inside eglSwapBuffers = waiting for the gpu / vsync)
+namespace perf {
+using pclock = std::chrono::steady_clock;
+pclock::time_point g_windowStart{}, g_lastSwapEnd{}, g_reportStart{};
+int g_frames = 0;
+double g_cpuMs = 0, g_swapMs = 0, g_worstMs = 0;
+}
+
+// ---- autoplay (benchmarks without touching the pc) ----
+// LocalState\autoplay.txt, lines "<seconds> key <glfw key code>", seconds after
+// the minecraft window got its title. presses the key for one poll.
+namespace autoplay {
+struct Step { double at; int key; bool done; };
+std::vector<Step> g_steps;
+bool g_loaded = false;
+int g_releaseKey = -1;
+}
+
+void AutoplayLoad()
+{
+    using namespace autoplay;
+    if (g_loaded) return;
+    g_loaded = true;
+    std::wstring path = std::wstring{ winrt::Windows::Storage::ApplicationData::Current().LocalFolder().Path() } + L"\\autoplay.txt";
+    FILE* f = nullptr;
+    if (_wfopen_s(&f, path.c_str(), L"r") != 0 || !f) return;
+    char line[256];
+    while (fgets(line, sizeof(line), f)) {
+        double at = 0;
+        int key = 0;
+        if (sscanf_s(line, "%lf key %d", &at, &key) == 2) g_steps.push_back({ at, key, false });
+    }
+    fclose(f);
+    Log("autoplay: %zu steps", g_steps.size());
+}
+
+void AutoplayTick(Window* win)
+{
+    using namespace autoplay;
+    if (!win || g_steps.empty() || perf::g_windowStart.time_since_epoch().count() == 0) return;
+    auto gw = reinterpret_cast<GLFWwindow*>(win);
+    if (g_releaseKey >= 0) {
+        win->keys[g_releaseKey] = GLFW_RELEASE;
+        if (win->keyCb) win->keyCb(gw, g_releaseKey, 0, GLFW_RELEASE, 0);
+        g_releaseKey = -1;
+        return;
+    }
+    double t = std::chrono::duration<double>(perf::pclock::now() - perf::g_windowStart).count();
+    for (auto& s : g_steps) {
+        if (s.done || t < s.at) continue;
+        s.done = true;
+        Log("autoplay: key %d at %.1f s", s.key, t);
+        win->keys[s.key] = GLFW_PRESS;
+        if (win->keyCb) win->keyCb(gw, s.key, 0, GLFW_PRESS, 0);
+        g_releaseKey = s.key;
+        break;
+    }
+}
+
 void PadInput(Window* win)
 {
     using namespace pad;
@@ -1248,7 +1309,15 @@ API void glfwDestroyWindow(GLFWwindow* w)
 
 API int glfwWindowShouldClose(GLFWwindow* w) { return W(w)->shouldClose; }
 API void glfwSetWindowShouldClose(GLFWwindow* w, int value) { W(w)->shouldClose = value; }
-API void glfwSetWindowTitle(GLFWwindow*, const char* title) { Log("title: %s", title ? title : ""); }
+API void glfwSetWindowTitle(GLFWwindow*, const char* title)
+{
+    Log("title: %s", title ? title : "");
+    // the minecraft window: start the clock for autoplay
+    if (title && strstr(title, "Minecraft") && perf::g_windowStart.time_since_epoch().count() == 0) {
+        perf::g_windowStart = perf::pclock::now();
+        AutoplayLoad();
+    }
+}
 API void glfwSetWindowIcon(GLFWwindow*, int, const GLFWimage*) {}
 
 API void glfwGetWindowPos(GLFWwindow*, int* x, int* y)
@@ -1370,6 +1439,7 @@ API void glfwPollEvents(void)
     RefreshPads();
     DispatchEvents();
     PadInput(g_main);
+    AutoplayTick(g_main);
 }
 
 API void glfwWaitEventsTimeout(double timeout)
@@ -1599,8 +1669,36 @@ API GLFWwindow* glfwGetCurrentContext(void) { return reinterpret_cast<GLFWwindow
 API void glfwSwapBuffers(GLFWwindow* w)
 {
     if (W(w) == g_main) DrawPadCursor(g_main);
+    auto t0 = perf::pclock::now();
     if (!g_egl.SwapBuffers(g_egl.display, W(w)->surface)) {
         SetError(GLFW_PLATFORM_ERROR, "eglSwapBuffers failed (0x%x)", g_egl.GetError());
+    }
+    if (W(w) == g_main) {
+        using namespace perf;
+        auto t1 = perf::pclock::now();
+        if (g_lastSwapEnd.time_since_epoch().count()) {
+            double cpu = std::chrono::duration<double, std::milli>(t0 - g_lastSwapEnd).count();
+            double swap = std::chrono::duration<double, std::milli>(t1 - t0).count();
+            g_cpuMs += cpu;
+            g_swapMs += swap;
+            g_worstMs = (std::max)(g_worstMs, cpu + swap);
+            g_frames++;
+        } else {
+            g_reportStart = t1;
+        }
+        g_lastSwapEnd = t1;
+        double span = std::chrono::duration<double>(t1 - g_reportStart).count();
+        if (span >= 5.0 && g_frames > 0) {
+            // draw calls that really reached the GLES driver (mobileglues counts them)
+            using TakeDraws = unsigned (*)();
+            static TakeDraws takeDraws = g_egl.mg ? reinterpret_cast<TakeDraws>(GetProcAddress(g_egl.mg, "mg_take_draw_count")) : nullptr;
+            double draws = takeDraws ? static_cast<double>(takeDraws()) / g_frames : -1.0;
+            Log("perf: %.1f fps, cpu %.2f ms, swap %.2f ms, worst frame %.1f ms, %.0f draws/frame", g_frames / span,
+                g_cpuMs / g_frames, g_swapMs / g_frames, g_worstMs, draws);
+            g_frames = 0;
+            g_cpuMs = g_swapMs = g_worstMs = 0;
+            g_reportStart = t1;
+        }
     }
 }
 
