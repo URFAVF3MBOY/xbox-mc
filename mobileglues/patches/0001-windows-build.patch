@@ -221,7 +221,7 @@ index 4c3a9d2..30789c3 100644
          *params = GL_TRUE;
      }
 diff --git a/MobileGlues-cpp/gles/loader.cpp b/MobileGlues-cpp/gles/loader.cpp
-index 726ff47..eea4c8d 100644
+index 726ff47..623e6e5 100644
 --- a/MobileGlues-cpp/gles/loader.cpp
 +++ b/MobileGlues-cpp/gles/loader.cpp
 @@ -29,18 +29,31 @@ void *gles = nullptr, *egl = nullptr;
@@ -256,6 +256,72 @@ index 726ff47..eea4c8d 100644
  
  static const char* egl_lib[] = {
  #if defined(BCMHOST)
+@@ -296,6 +309,57 @@ void InitGLESCapabilities() {
+     }
+ }
+ 
++
++#ifdef MG_WINDOWS
++// xbox-mc: counts the draw calls that really go to the GLES driver (after
++// multidraw unrolling etc), glfw puts the number per frame in its perf log.
++// the GLES table entries get swapped for wrappers that count and pass on
++#include <atomic>
++static std::atomic<unsigned> g_mg_draws{0};
++static struct {
++    glDrawArrays_PTR drawArrays;
++    glDrawElements_PTR drawElements;
++    glDrawRangeElements_PTR drawRangeElements;
++    glDrawElementsBaseVertex_PTR drawElementsBaseVertex;
++    glDrawRangeElementsBaseVertex_PTR drawRangeElementsBaseVertex;
++    glDrawArraysInstanced_PTR drawArraysInstanced;
++    glDrawElementsInstanced_PTR drawElementsInstanced;
++    glDrawElementsInstancedBaseVertex_PTR drawElementsInstancedBaseVertex;
++    glDrawArraysIndirect_PTR drawArraysIndirect;
++    glDrawElementsIndirect_PTR drawElementsIndirect;
++} g_mg_real;
++
++static void APIENTRY_GLES cDrawArrays(GLenum m, GLint f, GLsizei c) { g_mg_draws++; g_mg_real.drawArrays(m, f, c); }
++static void APIENTRY_GLES cDrawElements(GLenum m, GLsizei c, GLenum t, const void* i) { g_mg_draws++; g_mg_real.drawElements(m, c, t, i); }
++static void APIENTRY_GLES cDrawRangeElements(GLenum m, GLuint s, GLuint e, GLsizei c, GLenum t, const void* i) { g_mg_draws++; g_mg_real.drawRangeElements(m, s, e, c, t, i); }
++static void APIENTRY_GLES cDrawElementsBaseVertex(GLenum m, GLsizei c, GLenum t, const void* i, GLint b) { g_mg_draws++; g_mg_real.drawElementsBaseVertex(m, c, t, i, b); }
++static void APIENTRY_GLES cDrawRangeElementsBaseVertex(GLenum m, GLuint s, GLuint e, GLsizei c, GLenum t, const void* i, GLint b) { g_mg_draws++; g_mg_real.drawRangeElementsBaseVertex(m, s, e, c, t, i, b); }
++static void APIENTRY_GLES cDrawArraysInstanced(GLenum m, GLint f, GLsizei c, GLsizei n) { g_mg_draws++; g_mg_real.drawArraysInstanced(m, f, c, n); }
++static void APIENTRY_GLES cDrawElementsInstanced(GLenum m, GLsizei c, GLenum t, const void* i, GLsizei n) { g_mg_draws++; g_mg_real.drawElementsInstanced(m, c, t, i, n); }
++static void APIENTRY_GLES cDrawElementsInstancedBaseVertex(GLenum m, GLsizei c, GLenum t, const void* i, GLsizei n, GLint b) { g_mg_draws++; g_mg_real.drawElementsInstancedBaseVertex(m, c, t, i, n, b); }
++static void APIENTRY_GLES cDrawArraysIndirect(GLenum m, const void* i) { g_mg_draws++; g_mg_real.drawArraysIndirect(m, i); }
++static void APIENTRY_GLES cDrawElementsIndirect(GLenum m, GLenum t, const void* i) { g_mg_draws++; g_mg_real.drawElementsIndirect(m, t, i); }
++
++#define MG_COUNT(field, member, wrapper) \
++    if (g_gles_func.field) { g_mg_real.member = g_gles_func.field; g_gles_func.field = wrapper; }
++
++static void mg_install_draw_counters() {
++    MG_COUNT(glDrawArrays, drawArrays, cDrawArrays)
++    MG_COUNT(glDrawElements, drawElements, cDrawElements)
++    MG_COUNT(glDrawRangeElements, drawRangeElements, cDrawRangeElements)
++    MG_COUNT(glDrawElementsBaseVertex, drawElementsBaseVertex, cDrawElementsBaseVertex)
++    MG_COUNT(glDrawRangeElementsBaseVertex, drawRangeElementsBaseVertex, cDrawRangeElementsBaseVertex)
++    MG_COUNT(glDrawArraysInstanced, drawArraysInstanced, cDrawArraysInstanced)
++    MG_COUNT(glDrawElementsInstanced, drawElementsInstanced, cDrawElementsInstanced)
++    MG_COUNT(glDrawElementsInstancedBaseVertex, drawElementsInstancedBaseVertex, cDrawElementsInstancedBaseVertex)
++    MG_COUNT(glDrawArraysIndirect, drawArraysIndirect, cDrawArraysIndirect)
++    MG_COUNT(glDrawElementsIndirect, drawElementsIndirect, cDrawElementsIndirect)
++}
++
++// glfw calls this once per perf report: draws since the last call
++extern "C" __declspec(dllexport) unsigned mg_take_draw_count() { return g_mg_draws.exchange(0); }
++#endif
++
+ void init_target_gles() {
+     init_gl_state();
+ 
+@@ -696,4 +760,7 @@ void init_target_gles() {
+             g_gles_func.glDrawElementsBaseVertex = nullptr;
+         }
+     }
++#ifdef MG_WINDOWS
++    mg_install_draw_counters();
++#endif
+ }
 diff --git a/MobileGlues-cpp/glx/lookup.cpp b/MobileGlues-cpp/glx/lookup.cpp
 index 7d1ab77..4a227dc 100644
 --- a/MobileGlues-cpp/glx/lookup.cpp
