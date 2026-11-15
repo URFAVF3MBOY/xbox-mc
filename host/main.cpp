@@ -207,6 +207,22 @@ void RunJava()
     std::string tmp = local + "\\tmp";
     CreateDirectoryA(tmp.c_str(), nullptr);
 
+    // minecraft (log4j, options.txt...) writes relative to the current folder,
+    // which starts as the read-only package folder. SetCurrentDirectoryW isn't in
+    // the uwp headers either, same trick as LoadLibraryExW
+    std::string gameDir = local + "\\game";
+    CreateDirectoryA(gameDir.c_str(), nullptr);
+    {
+        MEMORY_BASIC_INFORMATION mbi{};
+        using SetCwdFn = BOOL(WINAPI*)(LPCWSTR);
+        SetCwdFn setCwd = nullptr;
+        if (VirtualQuery(reinterpret_cast<void*>(&CreateFile2), &mbi, sizeof(mbi)))
+            setCwd = reinterpret_cast<SetCwdFn>(GetProcAddress(static_cast<HMODULE>(mbi.AllocationBase), "SetCurrentDirectoryW"));
+        std::wstring wgame = LocalDir() + L"\\game";
+        if (setCwd && setCwd(wgame.c_str())) LogLine("current folder: %s", gameDir.c_str());
+        else LogLine("couldn't set the current folder (error %lu)", GetLastError());
+    }
+
     std::string cp = install + "\\java";
     for (auto jar : { "lwjgl", "lwjgl-glfw", "lwjgl-opengl" }) cp += ";" + install + "\\lib\\" + jar + "-3.2.2.jar";
 
@@ -215,7 +231,11 @@ void RunJava()
         "-Duser.home=" + local,
         // so java can find client_id.txt in the package
         "-Dxmc.install=" + install,
+        // my jdk fixes for the sandbox (java\jdk-patches)
+        "--patch-module=java.base=" + install + "\\patch\\java.base",
         "-Djava.io.tmpdir=" + tmp,
+        // jna (minecraft's narrator) unpacks its dll here
+        "-Djna.tmpdir=" + tmp,
         "-Xmx2560m",
         // no shared memory perf file, it wants a desktop temp dir
         "-XX:-UsePerfData",
