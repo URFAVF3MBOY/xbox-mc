@@ -163,7 +163,7 @@ index 48dd13d..33ff7e9 100644
  #include "../shader.h"
  #include "../program.h"
 diff --git a/MobileGlues-cpp/gl/program.cpp b/MobileGlues-cpp/gl/program.cpp
-index 4c3a9d2..cd44a3e 100644
+index 4c3a9d2..30789c3 100644
 --- a/MobileGlues-cpp/gl/program.cpp
 +++ b/MobileGlues-cpp/gl/program.cpp
 @@ -5,7 +5,9 @@
@@ -177,6 +177,32 @@ index 4c3a9d2..cd44a3e 100644
  #include "GL/glext.h"
  #include "GLES3/gl32.h"
  #include "log.h"
+@@ -164,6 +166,25 @@ void glGetProgramiv(GLuint program, GLenum pname, GLint* params) {
+         GLES.glGetProgramInfoLog(program, 512, nullptr, infoLog);
+ 
+         LOG_W_FORCE("Program %d linking failed: \n%s", program, infoLog);
++#ifdef MG_WINDOWS
++        // xbox-mc: the driver's link log is often empty, so also dump what each
++        // attached shader turned into (the GLSL ES that went to the driver)
++        GLuint shaders[8];
++        GLsizei count = 0;
++        GLES.glGetAttachedShaders(program, 8, &count, shaders);
++        for (GLsizei i = 0; i < count; i++) {
++            GLint type = 0, ok = 0, len = 0;
++            GLES.glGetShaderiv(shaders[i], GL_SHADER_TYPE, &type);
++            GLES.glGetShaderiv(shaders[i], GL_COMPILE_STATUS, &ok);
++            GLES.glGetShaderiv(shaders[i], GL_SHADER_SOURCE_LENGTH, &len);
++            std::vector<GLchar> src(len > 0 ? len : 1);
++            GLES.glGetShaderSource(shaders[i], static_cast<GLsizei>(src.size()), nullptr, src.data());
++            GLchar shLog[1024] = {};
++            GLES.glGetShaderInfoLog(shaders[i], sizeof(shLog), nullptr, shLog);
++            LOG_W_FORCE("--- shader %u (%s, compiled=%d) log:\n%s\n--- source:\n%s\n--- end", shaders[i],
++                        type == GL_VERTEX_SHADER ? "vertex" : "fragment", ok, shLog, src.data());
++        }
++#endif
+         LOG_W_FORCE("Now try to cheat.");
+         *params = GL_TRUE;
+     }
 diff --git a/MobileGlues-cpp/gles/loader.cpp b/MobileGlues-cpp/gles/loader.cpp
 index 726ff47..eea4c8d 100644
 --- a/MobileGlues-cpp/gles/loader.cpp
