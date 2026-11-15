@@ -272,21 +272,13 @@ void RunJava()
         "-Djna.boot.library.path=" + install + "\\natives",
         "-Djna.nounpack=true",
         "-Xmx2560m",
-        // same min as max: no heap resizing while playing. g1 with short pauses
-        // and a bigger young gen, minecraft makes lots of short lived garbage
-        "-Xms2560m",
-        "-XX:+UseG1GC",
-        "-XX:MaxGCPauseMillis=30",
-        "-XX:+UnlockExperimentalVMOptions",
-        "-XX:G1NewSizePercent=30",
-        "-XX:G1ReservePercent=15",
-        "-XX:+ParallelRefProcEnabled",
         "-XX:+DisableExplicitGC",
         // no shared memory perf file, it wants a desktop temp dir
         "-XX:-UsePerfData",
         "-XX:ErrorFile=" + local + "\\hs_err_pid%p.log",
         // jvm log output ends up in the vfprintf hook below, so in host.log
-        "-Xlog:all=warning,os=info",
+        // gc=info: every gc pause shows up in host.log (hitch hunting)
+        "-Xlog:all=warning,os=info,gc=info",
         // lwjgl: natives from the package, my glfw, gl through mobileglues
         "-Dorg.lwjgl.librarypath=" + install + "\\natives",
         "-Dorg.lwjgl.glfw.libname=" + install + "\\glfw3.dll",
@@ -295,6 +287,25 @@ void RunJava()
         "-Dorg.lwjgl.util.DebugLoader=true",
     };
     std::vector<std::string> extra;
+    // gc flags. LocalState\jvm.txt (one flag per line) replaces the defaults,
+    // so gc setups can be compared without a new build
+    std::vector<std::string> gcFlags = { "-Xms2560m", "-XX:+UseG1GC", "-XX:MaxGCPauseMillis=30",
+                                         "-XX:+ParallelRefProcEnabled" };
+    {
+        FILE* jf = nullptr;
+        if (_wfopen_s(&jf, (LocalDir() + L"\\jvm.txt").c_str(), L"r") == 0 && jf) {
+            gcFlags.clear();
+            char line[512];
+            while (fgets(line, sizeof(line), jf)) {
+                std::string l = line;
+                while (!l.empty() && (l.back() == '\n' || l.back() == '\r' || l.back() == ' ')) l.pop_back();
+                if (!l.empty() && l[0] == '-') gcFlags.push_back(l);
+            }
+            fclose(jf);
+            LogLine("gc flags from jvm.txt");
+        }
+    }
+    extra.insert(extra.end(), gcFlags.begin(), gcFlags.end());
     // profiling: with LocalState\jfr.on a 60 s flight recording starts 90 s in
     if (GetFileAttributesW((LocalDir() + L"\\jfr.on").c_str()) != INVALID_FILE_ATTRIBUTES) {
         extra.push_back("-XX:StartFlightRecording=delay=90s,duration=60s,settings=profile,filename=" + local + "\\bench.jfr");
