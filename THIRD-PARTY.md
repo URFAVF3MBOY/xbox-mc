@@ -14,4 +14,6 @@ The app package has all the license texts in `licenses\` and `jre\legal\`.
 
 Not in the package, downloaded by the launcher on the console: Minecraft (from
 Mojang, after sign-in), Fabric Loader (from Fabric) and the mods Fabric API,
-Lithium, LazyDFU, FerriteCore, Starlight and Entity Culling (from Modrinth).
+Sodium, Sodium Extra, Reese's Sodium Options, Lithium, LazyDFU, FerriteCore,
+Starlight and Entity Culling (from Modrinth). Sodium is patched at runtime by my
+own mod in compatmod/, Sodium itself isn't changed or shipped.
