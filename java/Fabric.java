@@ -21,10 +21,11 @@ public final class Fabric {
     static final String MODRINTH = "https://api.modrinth.com/v2/project/";
 
     // the mods that get installed and kept up to date. all client side, about
-    // speed, memory or settings (sodium extra + reese's menu), nothing that
-    // changes the game itself
-    static final String[] MODS = { "fabric-api", "sodium", "sodium-extra", "reeses-sodium-options",
-            "lithium", "lazydfu", "ferrite-core", "starlight" };
+    // speed or memory, nothing that changes the game itself.
+    // no sodium: it needs uniform blocks, and the xbox one's gpu driver can't
+    // link shaders that use them (host/shadertest showed it). sodium extra and
+    // reese's need sodium
+    static final String[] MODS = { "fabric-api", "lithium", "lazydfu", "ferrite-core", "starlight", "entityculling" };
 
     public static final class Result {
         public String mainClass;
@@ -111,6 +112,13 @@ public final class Fabric {
             if (old != null && !old.equals(name)) Files.deleteIfExists(dir.resolve((String) old));
         }
         new Downloader(game, ui, log).fetchAll(items, "downloading mods");
+        // mods I took off the list get removed again
+        for (Map.Entry<String, Object> e : installed.entrySet()) {
+            if (!now.containsKey(e.getKey()) && java.util.Arrays.asList(MODS).indexOf(e.getKey()) < 0) {
+                Files.deleteIfExists(dir.resolve((String) e.getValue()));
+                log.println("mod " + e.getKey() + " removed");
+            }
+        }
         Files.writeString(listFile, Json.write(now));
         log.println("mods: " + now.values());
     }

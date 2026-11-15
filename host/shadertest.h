@@ -1,5 +1,5 @@
 // shader link test straight on ANGLE (no minecraft, no mobileglues).
-// runs on every start for now (a few ms). links every shadertest\*.vert
+// only runs when LocalState\shadertest.on exists. links every shadertest\*.vert
 // in the package with shadertest\sodium.frag, once at the normal D3D feature
 // level and once capped at 10.1 like the xbox one, and logs what ANGLE says.
 // included from main.cpp inside its namespace (uses LogLine, LocalDir, InstallDir)
@@ -98,7 +98,7 @@ void ShaderTestAt(int maxMajor, int maxMinor)
 
 void RunShaderTestIfAsked()
 {
-    // for now it always runs, it only takes a few ms (sodium on the xbox hunt)
+    if (GetFileAttributesW((LocalDir() + L"\\shadertest.on").c_str()) == INVALID_FILE_ATTRIBUTES) return;
     ShaderTestAt(0, 0);
     ShaderTestAt(10, 1);
 }
