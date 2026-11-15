@@ -1,4 +1,4 @@
-// downloads minecraft 1.16.5 from mojang into LocalState\game:
+// downloads a minecraft version from mojang into LocalState\game:
 // version json, client jar, libraries (windows ones), asset index + objects.
 // everything is sha1 checked, files that are already there and match get skipped.
 // only after login, the files come from mojang's servers, nothing is in the package.

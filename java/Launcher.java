@@ -1,5 +1,5 @@
 // step 5: the launcher screen. logs in (shows the microsoft code on screen),
-// checks the account owns minecraft, then downloads 1.16.5.
+// checks the account owns minecraft, then downloads minecraft and starts it.
 // the game itself starts in step 6. log goes to LocalState\launcher.log
 
 import static org.lwjgl.glfw.GLFW.*;
@@ -16,7 +16,7 @@ import org.lwjgl.opengl.GL;
 import org.lwjgl.system.MemoryStack;
 
 public class Launcher {
-    static final String VERSION = "1.16.5";
+    static final String VERSION = "1.17.1";
 
     static PrintStream log;
 
@@ -28,6 +28,8 @@ public class Launcher {
     static volatile int done, total;
     static volatile long bytes;
     static volatile boolean finished;
+    static volatile Auth.Account account;
+    static volatile Downloader.Result files;
 
     public static void main(String[] args) throws Exception {
         Path local = new File(System.getProperty("user.home")).toPath();
@@ -54,8 +56,14 @@ public class Launcher {
         Font.Quads q = new Font.Quads();
         GLFWGamepadState pad = GLFWGamepadState.malloc();
 
+        double readyAt = -1;
         while (!glfwWindowShouldClose(window)) {
             glfwPollEvents();
+            // show the green "downloaded" screen for a moment, then start the game
+            if (finished && files != null) {
+                if (readyAt < 0) readyAt = glfwGetTime();
+                else if (glfwGetTime() - readyAt > 1.5) break;
+            }
             int w, h;
             try (MemoryStack stack = MemoryStack.stackPush()) {
                 var pw = stack.mallocInt(1);
@@ -133,7 +141,46 @@ public class Launcher {
                 glfwSetWindowShouldClose(window, true);
             }
         }
+        glfwDestroyWindow(window);
         glfwTerminate();
+
+        if (finished && files != null) startGame(local, account, files);
+    }
+
+    // runs minecraft in this same jvm (there can only be one per process), with
+    // its jars in their own class loader. lwjgl core/glfw/opengl are already
+    // loaded from the app's own jars (same 3.2.2), so those three are left out.
+    static void startGame(Path local, Auth.Account a, Downloader.Result r) throws Exception {
+        Path game = local.resolve("game");
+        java.util.List<java.net.URL> urls = new java.util.ArrayList<>();
+        for (Path lib : r.libraries) {
+            String n = lib.getFileName().toString();
+            if (n.equals("lwjgl-3.2.2.jar") || n.equals("lwjgl-glfw-3.2.2.jar") || n.equals("lwjgl-opengl-3.2.2.jar")) continue;
+            urls.add(lib.toUri().toURL());
+        }
+        urls.add(r.clientJar.toUri().toURL());
+
+        String[] gameArgs = {
+            "--username", a.name,
+            "--version", VERSION,
+            "--gameDir", game.toString(),
+            "--assetsDir", r.assetsDir.toString(),
+            "--assetIndex", r.assetIndex,
+            "--uuid", a.uuid,
+            "--accessToken", a.accessToken,
+            "--userType", "msa",
+            "--versionType", "release",
+        };
+        System.setProperty("minecraft.launcher.brand", "xbox-mc");
+        System.setProperty("minecraft.launcher.version", "0.1");
+
+        String mainClass = (String) r.version.get("mainClass");
+        log.println("starting " + mainClass + " with " + urls.size() + " jars");
+        ClassLoader cl = new java.net.URLClassLoader(urls.toArray(new java.net.URL[0]), Launcher.class.getClassLoader());
+        Thread.currentThread().setContextClassLoader(cl);
+        Class<?> main = Class.forName(mainClass, true, cl);
+        main.getMethod("main", String[].class).invoke(null, (Object) gameArgs);
+        log.println("minecraft main returned");
     }
 
     static void work(Path local, Path install) {
@@ -144,6 +191,7 @@ public class Launcher {
             }, log);
             Auth.Account a = auth.login();
             player = a.name;
+            account = a;
 
             Downloader d = new Downloader(local.resolve("game"), new Downloader.Ui() {
                 public void status(String text) { setStatus(text); }
@@ -151,7 +199,8 @@ public class Launcher {
             }, log);
             Downloader.Result r = d.get(VERSION);
             log.println("client " + r.clientJar + ", " + r.libraries.size() + " libraries, assets " + r.assetIndex);
-            setStatus("minecraft " + VERSION + " is downloaded");
+            files = r;
+            setStatus("starting minecraft " + VERSION);
             finished = true;
         } catch (Throwable e) {
             e.printStackTrace(log);
