@@ -3,6 +3,15 @@
   "minVersion": "0.8",
   "package": "xbox_mc.compat",
   "compatibilityLevel": "JAVA_16",
-  "client": [ "ShaderLoaderMixin", "ChunkShaderInterfaceMixin", "IndexResultMixin", "RegionChunkRendererMixin" ],
-  "injectors": { "defaultRequire": 1 }
+  "client": [
+    "ShaderLoaderMixin",
+    "ChunkShaderInterfaceMixin",
+    "IndexResultMixin",
+    "RegionChunkRendererMixin",
+    "TaskBudgetMixin",
+    "StarlightOnceMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
 }

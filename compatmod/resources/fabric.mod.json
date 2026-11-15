@@ -1,11 +1,15 @@
 {
   "schemaVersion": 1,
   "id": "xbox-mc-compat",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "name": "xbox-mc compat",
-  "description": "Fixes for running mods on the Xbox One. Makes Sodium work without uniform blocks and with far fewer draw calls.",
+  "description": "Fixes for running mods on the Xbox One. Makes Sodium work without uniform blocks and with far fewer draw calls, and smooths out chunk loading.",
   "license": "MIT",
   "environment": "client",
-  "mixins": [ "xbox-mc-compat.mixins.json" ],
-  "depends": { "fabricloader": "*" }
+  "mixins": [
+    "xbox-mc-compat.mixins.json"
+  ],
+  "depends": {
+    "fabricloader": "*"
+  }
 }
