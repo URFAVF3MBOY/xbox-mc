@@ -81,6 +81,7 @@ std::string Narrow(std::wstring const& w)
 }
 
 #include "logserver.h"
+#include "shadertest.h"
 
 void OpenLog()
 {
@@ -434,6 +435,7 @@ struct App : implements<App, IFrameworkViewSource, IFrameworkView> {
 
         DeleteFileW((LocalDir() + L"\\logurl.txt").c_str());
         StartLogServer();
+        RunShaderTestIfAsked();
 
         bool glfwOk = AttachGlfw(m_window);
         if (glfwOk) StartJava();

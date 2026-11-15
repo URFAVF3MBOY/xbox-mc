@@ -92,6 +92,9 @@ $clientId = Join-Path $root "local\client_id.txt"
 if (Test-Path $clientId) { Copy-Item $clientId $stage; Write-Host "client id: from local\client_id.txt" }
 else { Write-Host "client id: none" }
 
+# shaders for the shader link test in the host (only runs with LocalState\shadertest.on)
+Copy-Item -Recurse (Join-Path $root "host\shadertest") (Join-Path $stage "shadertest")
+
 # license texts that have to ship with the dlls (the jre has its own in jre\legal)
 $lic = Join-Path $stage "licenses"
 New-Item -ItemType Directory -Force $lic | Out-Null
