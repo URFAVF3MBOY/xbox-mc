@@ -507,6 +507,11 @@ unsigned char g_hats[GLFW_JOYSTICK_LAST + 1][1];
 
 void RefreshPads()
 {
+    // the controller list is a winrt call, no need for it every frame
+    static auto last = std::chrono::steady_clock::time_point{};
+    auto t = std::chrono::steady_clock::now();
+    if (last.time_since_epoch().count() && t - last < std::chrono::milliseconds(500)) return;
+    last = t;
     std::vector<Gamepad> now;
     try {
         for (auto const& p : Gamepad::Gamepads()) {
