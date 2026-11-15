@@ -382,9 +382,21 @@ bool EnsureEgl()
 #ifdef EGL_PLATFORM_ANGLE_ENABLE_AUTOMATIC_TRIM_ANGLE
         EGL_PLATFORM_ANGLE_ENABLE_AUTOMATIC_TRIM_ANGLE, EGL_TRUE,
 #endif
+#ifdef EGL_EXPERIMENTAL_PRESENT_PATH_ANGLE
+        // draw straight into the swapchain instead of an extra texture that gets
+        // copied (and flipped) every frame. angle flips y in its shaders instead
+        EGL_EXPERIMENTAL_PRESENT_PATH_ANGLE, EGL_EXPERIMENTAL_PRESENT_PATH_FAST_ANGLE,
+#endif
         EGL_NONE,
     };
     EGLDisplay dpy = g_egl.GetPlatformDisplayEXT(EGL_PLATFORM_ANGLE_ANGLE, EGL_DEFAULT_DISPLAY, attribs);
+    Log("angle present path: %s",
+#ifdef EGL_EXPERIMENTAL_PRESENT_PATH_ANGLE
+        "fast"
+#else
+        "copy"
+#endif
+    );
     EGLint major = 0, minor = 0;
     if (dpy == EGL_NO_DISPLAY || !g_egl.Initialize(dpy, &major, &minor)) {
         SetError(GLFW_API_UNAVAILABLE, "eglInitialize failed (0x%x)", g_egl.GetError());
