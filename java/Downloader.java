@@ -123,7 +123,10 @@ public final class Downloader {
     void fetchAll(List<Item> items, String what) throws Exception {
         List<Item> todo = new ArrayList<>();
         ui.status("checking files");
-        for (Item it : items) if (!valid(it)) todo.add(it);
+        // some versions list the same library twice (1.17.1: text2speech), two
+        // downloads into the same file at once broke the second one
+        java.util.Set<Path> seen = new java.util.HashSet<>();
+        for (Item it : items) if (seen.add(it.file) && !valid(it)) todo.add(it);
         log.println(items.size() + " files, " + todo.size() + " to download");
         if (todo.isEmpty()) return;
 
@@ -165,7 +168,8 @@ public final class Downloader {
     private void fetch(Item it) throws Exception {
         if (valid(it)) return;
         Files.createDirectories(it.file.getParent());
-        Path tmp = it.file.resolveSibling(it.file.getFileName() + ".part");
+        // own temp file per download, in case the same file is fetched twice anyway
+        Path tmp = it.file.resolveSibling(it.file.getFileName() + "." + Thread.currentThread().getId() + ".part");
         HttpRequest req = HttpRequest.newBuilder(URI.create(it.url)).timeout(Duration.ofMinutes(5)).GET().build();
         HttpResponse<InputStream> r = Auth.http.send(req, HttpResponse.BodyHandlers.ofInputStream());
         if (r.statusCode() != 200) throw new IOException(it.url + " said " + r.statusCode());
