@@ -13,3 +13,5 @@ logs/
 handoff/
 # my login client id, never in git
 local/
+# my notes, stay local for now
+NOTES.md
