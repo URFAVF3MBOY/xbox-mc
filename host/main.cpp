@@ -234,6 +234,11 @@ void RunJava()
         // my jdk fixes for the sandbox (java\jdk-patches)
         "--patch-module=java.base=" + install + "\\patch\\java.base",
         "-Djava.io.tmpdir=" + tmp,
+        // java resolves relative paths (config\..., logs\...) against user.dir,
+        // which it only reads at startup. the package folder is read-only
+        "-Duser.dir=" + local + "\\game",
+        // no awt windows in a uwp app, fabric shows its errors in the log then
+        "-Djava.awt.headless=true",
         // jna (minecraft's narrator) unpacks its dll here
         "-Djna.tmpdir=" + tmp,
         "-Xmx2560m",
