@@ -177,7 +177,7 @@ public class Launcher {
                     if (!java.nio.file.Files.exists(trigger)) continue;
                     java.nio.file.Files.deleteIfExists(trigger);
                     log.println("profile: recording 60 s");
-                    try (jdk.jfr.Recording rec = new jdk.jfr.Recording(jdk.jfr.Configuration.getConfiguration("profile"))) {
+                    try (jdk.jfr.Recording rec = new jdk.jfr.Recording(jdk.jfr.Configuration.getConfiguration("default"))) {
                         rec.start();
                         Thread.sleep(60_000);
                         rec.stop();
