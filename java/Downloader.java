@@ -100,7 +100,7 @@ public final class Downloader {
             items.add(new Item(RESOURCES + sub, hash, size(e.getValue()), r.assetsDir.resolve("objects/" + sub)));
         }
 
-        fetchAll(items);
+        fetchAll(items, "downloading minecraft");
         return r;
     }
 
@@ -120,14 +120,14 @@ public final class Downloader {
         return ok;
     }
 
-    private void fetchAll(List<Item> items) throws Exception {
+    void fetchAll(List<Item> items, String what) throws Exception {
         List<Item> todo = new ArrayList<>();
         ui.status("checking files");
         for (Item it : items) if (!valid(it)) todo.add(it);
         log.println(items.size() + " files, " + todo.size() + " to download");
         if (todo.isEmpty()) return;
 
-        ui.status("downloading minecraft");
+        ui.status(what);
         AtomicInteger done = new AtomicInteger();
         AtomicLong bytes = new AtomicLong();
         // a few at a time, thousands of tiny asset files at once just choke

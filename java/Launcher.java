@@ -30,6 +30,7 @@ public class Launcher {
     static volatile boolean finished;
     static volatile Auth.Account account;
     static volatile Downloader.Result files;
+    static volatile Fabric.Result fabric;   // null = plain vanilla
 
     public static void main(String[] args) throws Exception {
         Path local = new File(System.getProperty("user.home")).toPath();
@@ -144,21 +145,34 @@ public class Launcher {
         glfwDestroyWindow(window);
         glfwTerminate();
 
-        if (finished && files != null) startGame(local, account, files);
+        if (finished && files != null) startGame(local, account, files, fabric);
     }
 
     // runs minecraft in this same jvm (there can only be one per process), with
     // its jars in their own class loader. lwjgl core/glfw/opengl are already
     // loaded from the app's own jars (same 3.2.2), so those three are left out.
-    static void startGame(Path local, Auth.Account a, Downloader.Result r) throws Exception {
+    // with fabric the main class is fabric's KnotClient, which finds the game
+    // and its libraries through java.class.path, so that gets set to the same jars.
+    static void startGame(Path local, Auth.Account a, Downloader.Result r, Fabric.Result fab) throws Exception {
         Path game = local.resolve("game");
-        java.util.List<java.net.URL> urls = new java.util.ArrayList<>();
+        java.util.List<Path> jars = new java.util.ArrayList<>();
+        if (fab != null) jars.addAll(fab.libraries);
         for (Path lib : r.libraries) {
             String n = lib.getFileName().toString();
             if (n.equals("lwjgl-3.2.2.jar") || n.equals("lwjgl-glfw-3.2.2.jar") || n.equals("lwjgl-opengl-3.2.2.jar")) continue;
-            urls.add(lib.toUri().toURL());
+            jars.add(lib);
         }
-        urls.add(r.clientJar.toUri().toURL());
+        jars.add(r.clientJar);
+        java.util.List<java.net.URL> urls = new java.util.ArrayList<>();
+        StringBuilder cp = new StringBuilder();
+        for (Path j : jars) {
+            urls.add(j.toUri().toURL());
+            if (cp.length() > 0) cp.append(java.io.File.pathSeparatorChar);
+            cp.append(j);
+        }
+        // lwjgl is already loaded by the app (its natives can only be loaded once),
+        // fabric normally refuses classes that aren't on its own class path
+        System.setProperty("fabric.debug.disableClassPathIsolation", "true");
 
         String[] gameArgs = {
             "--username", a.name,
@@ -173,8 +187,10 @@ public class Launcher {
         };
         System.setProperty("minecraft.launcher.brand", "xbox-mc");
         System.setProperty("minecraft.launcher.version", "0.1");
+        System.setProperty("java.class.path", cp.toString());
+        System.setProperty("fabric.gameJarPath", r.clientJar.toString());
 
-        String mainClass = (String) r.version.get("mainClass");
+        String mainClass = fab != null ? fab.mainClass : (String) r.version.get("mainClass");
         log.println("starting " + mainClass + " with " + urls.size() + " jars");
         ClassLoader cl = new java.net.URLClassLoader(urls.toArray(new java.net.URL[0]), Launcher.class.getClassLoader());
         Thread.currentThread().setContextClassLoader(cl);
@@ -199,8 +215,23 @@ public class Launcher {
             }, log);
             Downloader.Result r = d.get(VERSION);
             log.println("client " + r.clientJar + ", " + r.libraries.size() + " libraries, assets " + r.assetIndex);
+            Fabric.defaultOptions(local.resolve("game"));
+
+            // fabric + mods. if that part breaks the game still starts, just vanilla
+            try {
+                Fabric f = new Fabric(local.resolve("game"), new Downloader.Ui() {
+                    public void status(String text) { setStatus(text); }
+                    public void progress(int dn, int tt, long b) { done = dn; total = tt; bytes = b; }
+                }, log);
+                Fabric.Result fr = f.loader(VERSION);
+                f.mods(VERSION);
+                fabric = fr;
+            } catch (Exception e) {
+                e.printStackTrace(log);
+                log.println("fabric didn't work, starting vanilla");
+            }
             files = r;
-            setStatus("starting minecraft " + VERSION);
+            setStatus("starting minecraft " + VERSION + (fabric != null ? " with fabric" : ""));
             finished = true;
         } catch (Throwable e) {
             e.printStackTrace(log);

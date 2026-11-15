@@ -1,0 +1,169 @@
+// fabric for the downloaded minecraft: the loader + its libraries from fabric's
+// meta server, a few performance mods from modrinth, and low default settings
+// for the first start. everything sha1 checked like the game files.
+
+import java.io.IOException;
+import java.net.URI;
+import java.net.URLEncoder;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+public final class Fabric {
+    static final String META = "https://meta.fabricmc.net/v2/versions/loader/";
+    static final String MODRINTH = "https://api.modrinth.com/v2/project/";
+
+    // the mods that get installed and kept up to date. all client side, all
+    // about speed or memory, nothing that changes the game
+    static final String[] MODS = { "fabric-api", "sodium", "lithium", "lazydfu", "ferrite-core", "starlight" };
+
+    public static final class Result {
+        public String mainClass;
+        public List<Path> libraries = new ArrayList<>();
+        public String loaderVersion;
+    }
+
+    private final Path game;
+    private final Downloader.Ui ui;
+    private final java.io.PrintStream log;
+
+    public Fabric(Path game, Downloader.Ui ui, java.io.PrintStream log) {
+        this.game = game;
+        this.ui = ui;
+        this.log = log;
+    }
+
+    public Result loader(String mc) throws Exception {
+        ui.status("looking up fabric");
+        String loaderVer = null;
+        for (Object v : Json.arr(Auth.getJson(META + mc, null))) {
+            if (Boolean.TRUE.equals(Json.get(v, "loader", "stable"))) {
+                loaderVer = Json.str(v, "loader", "version");
+                break;
+            }
+        }
+        if (loaderVer == null) throw new IOException("fabric has no loader for " + mc);
+        Object profile = Auth.getJson(META + mc + "/" + loaderVer + "/profile/json", null);
+
+        Result r = new Result();
+        r.loaderVersion = loaderVer;
+        r.mainClass = Json.str(profile, "mainClass");
+        List<Downloader.Item> items = new ArrayList<>();
+        for (Object lib : Json.arr(Json.get(profile, "libraries"))) {
+            String name = Json.str(lib, "name");
+            String base = Json.str(lib, "url");
+            if (base == null) base = "https://maven.fabricmc.net/";
+            if (!base.endsWith("/")) base += "/";
+            String path = mavenPath(name);
+            String sha1 = Json.str(lib, "sha1");
+            if (sha1 == null) sha1 = fetchText(base + path + ".sha1").trim().split("\\s+")[0];
+            Object sz = Json.get(lib, "size");
+            long size = sz == null ? -1 : ((Number) sz).longValue();
+            Path file = game.resolve("libraries/" + path);
+            items.add(new Downloader.Item(base + path, sha1, size, file));
+            r.libraries.add(file);
+        }
+        new Downloader(game, ui, log).fetchAll(items, "downloading fabric " + loaderVer);
+        log.println("fabric " + loaderVer + ", " + r.libraries.size() + " libraries, main " + r.mainClass);
+        return r;
+    }
+
+    // installs/updates my mod list in game\mods. mods dropped in by hand stay
+    public void mods(String mc) throws Exception {
+        ui.status("checking mods");
+        Path dir = game.resolve("mods");
+        Files.createDirectories(dir);
+        Path listFile = dir.resolve(".xbox-mc-mods.json");
+        Map<String, Object> installed = Files.exists(listFile)
+                ? Json.obj(Json.parse(Files.readString(listFile))) : new LinkedHashMap<>();
+
+        List<Downloader.Item> items = new ArrayList<>();
+        Map<String, Object> now = new LinkedHashMap<>();
+        for (String slug : MODS) {
+            Object file;
+            try {
+                file = latestFile(slug, mc);
+            } catch (Exception e) {
+                // modrinth down or no build for this version: keep what's there
+                log.println("mod " + slug + ": " + e.getMessage());
+                if (installed.containsKey(slug)) now.put(slug, installed.get(slug));
+                continue;
+            }
+            if (file == null) {
+                log.println("mod " + slug + ": no fabric build for " + mc);
+                continue;
+            }
+            String name = Json.str(file, "filename");
+            Object sz = Json.get(file, "size");
+            items.add(new Downloader.Item(Json.str(file, "url"), Json.str(file, "hashes", "sha1"),
+                    sz == null ? -1 : ((Number) sz).longValue(), dir.resolve(name)));
+            now.put(slug, name);
+            Object old = installed.get(slug);
+            if (old != null && !old.equals(name)) Files.deleteIfExists(dir.resolve((String) old));
+        }
+        new Downloader(game, ui, log).fetchAll(items, "downloading mods");
+        Files.writeString(listFile, Json.write(now));
+        log.println("mods: " + now.values());
+    }
+
+    private Object latestFile(String slug, String mc) throws Exception {
+        String q = "?loaders=" + URLEncoder.encode("[\"fabric\"]", StandardCharsets.UTF_8)
+                + "&game_versions=" + URLEncoder.encode("[\"" + mc + "\"]", StandardCharsets.UTF_8);
+        HttpRequest req = HttpRequest.newBuilder(URI.create(MODRINTH + slug + "/version" + q))
+                .header("User-Agent", "xbox-mc/0.1")
+                .timeout(Duration.ofSeconds(30)).GET().build();
+        Object versions = Auth.check(Auth.send(req));
+        // newest first; prefer a release over a beta
+        Object pick = null;
+        for (Object v : Json.arr(versions)) {
+            if ("release".equals(Json.str(v, "version_type"))) { pick = v; break; }
+            if (pick == null) pick = v;
+        }
+        if (pick == null) return null;
+        Object primary = null;
+        for (Object f : Json.arr(Json.get(pick, "files"))) {
+            if (primary == null || Boolean.TRUE.equals(Json.get(f, "primary"))) primary = f;
+        }
+        return primary;
+    }
+
+    // low settings for the first start only, the xbox one cpu is slow.
+    // after that options.txt belongs to the player
+    public static void defaultOptions(Path game) throws IOException {
+        Path f = game.resolve("options.txt");
+        if (Files.exists(f)) return;
+        Files.createDirectories(game);
+        Files.writeString(f, String.join("\n",
+                "renderDistance:6",
+                "graphicsMode:0",
+                "renderClouds:\"false\"",
+                "particles:2",
+                "entityShadows:false",
+                "biomeBlendRadius:0",
+                "mipmapLevels:0",
+                "maxFps:60",
+                "enableVsync:true",
+                "entityDistanceScaling:0.75",
+                "") );
+    }
+
+    static String mavenPath(String coords) {
+        String[] p = coords.split(":");
+        String group = p[0].replace('.', '/'), artifact = p[1], version = p[2];
+        String classifier = p.length > 3 ? "-" + p[3] : "";
+        return group + "/" + artifact + "/" + version + "/" + artifact + "-" + version + classifier + ".jar";
+    }
+
+    static String fetchText(String url) throws Exception {
+        HttpResponse<String> r = Auth.send(HttpRequest.newBuilder(URI.create(url)).timeout(Duration.ofSeconds(30)).GET().build());
+        if (r.statusCode() != 200) throw new IOException(url + " said " + r.statusCode());
+        return r.body();
+    }
+}
