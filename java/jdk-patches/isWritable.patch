@@ -1,0 +1,39 @@
+diff --git a/java.base/sun/nio/fs/WindowsFileSystemProvider.java b/java.base/sun/nio/fs/WindowsFileSystemProvider.java
+index 964e338..bc4f02c 100644
+--- a/java.base/sun/nio/fs/WindowsFileSystemProvider.java
++++ b/java.base/sun/nio/fs/WindowsFileSystemProvider.java
+@@ -299,6 +299,18 @@ class WindowsFileSystemProvider
+      * Checks the file security against desired access.
+      */
+     private static boolean hasDesiredAccess(WindowsPath file, int rights) throws IOException {
++        // xbox-mc: in the uwp app sandbox the acl check below says no even for
++        // the app's own folders, so first just try to open it with that access
++        try {
++            long h = CreateFile(file.getPathForWin32Calls(), rights,
++                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
++                OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS);
++            CloseHandle(h);
++            return true;
++        } catch (WindowsException x) {
++            // fall through to the acl check
++        }
++
+         // read security descriptor containing ACL (symlinks are followed)
+         boolean hasRights = false;
+         String target = WindowsLinkSupport.getFinalPath(file, true);
+@@ -427,7 +439,14 @@ class WindowsFileSystemProvider
+                 exc.rethrowAsIOException(file);
+             }
+ 
+-            if (WindowsFileStore.create(file).isReadOnly()) {
++            // xbox-mc: the sandbox isn't allowed to ask about the volume (C:\),
++            // that failing doesn't mean the file is read-only
++            boolean readOnlyVolume = false;
++            try {
++                readOnlyVolume = WindowsFileStore.create(file).isReadOnly();
++            } catch (IOException ignored) {
++            }
++            if (readOnlyVolume) {
+                 throw new AccessDeniedException(
+                     file.getPathForExceptionMessage(), null, "Read-only file system");
+             }

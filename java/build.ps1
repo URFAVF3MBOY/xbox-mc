@@ -29,7 +29,9 @@ New-Item -ItemType Directory -Force $out, $dl | Out-Null
 $modules = @(
     "java.base", "java.desktop", "java.logging", "java.management", "java.naming",
     "java.net.http", "java.scripting", "java.sql", "java.xml", "jdk.crypto.ec",
-    "jdk.unsupported", "jdk.zipfs", "jdk.localedata"
+    "jdk.unsupported", "jdk.zipfs", "jdk.localedata",
+    # mixin (fabric) uses javax.annotation.processing from here
+    "java.compiler"
 ) -join ","
 
 & (Join-Path $Jdk "bin\jlink.exe") --module-path (Join-Path $Jdk "jmods") --add-modules $modules `
@@ -114,8 +116,12 @@ foreach ($p in Get-ChildItem (Join-Path $here "jdk-patches") -Filter *.patch) {
 foreach ($f in $patched) {
     if (-not (Select-String -Path $f -SimpleMatch "xbox-mc" -Quiet)) { throw "jdk patch didn't change $f" }
 }
-& (Join-Path $Jdk "bin\javac.exe") --patch-module "java.base=$(Join-Path $psrc 'java.base')" -d $pout $patched
-if ($LASTEXITCODE -ne 0) { throw "jdk patch compile failed" }
+# through cmd: javac warns about internal api (it's the jdk itself), and
+# powershell 5 treats anything on stderr as an error
+$javac = Join-Path $Jdk "bin\javac.exe"
+$files = ($patched | ForEach-Object { "`"$_`"" }) -join " "
+$jout = cmd /c "`"$javac`" -nowarn --patch-module `"java.base=$(Join-Path $psrc 'java.base')`" -d `"$pout`" $files 2>&1"
+if ($LASTEXITCODE -ne 0) { $jout | Write-Host; throw "jdk patch compile failed" }
 Write-Host "jdk patches: $((Get-ChildItem -Recurse $pout -Filter *.class).Count) classes"
 
 $inc = Join-Path $out "include"
