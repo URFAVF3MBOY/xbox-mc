@@ -294,7 +294,16 @@ void RunJava()
         "-Dorg.lwjgl.util.Debug=true",
         "-Dorg.lwjgl.util.DebugLoader=true",
     };
+    std::vector<std::string> extra;
+    // profiling: with LocalState\jfr.on a 60 s flight recording starts 90 s in
+    if (GetFileAttributesW((LocalDir() + L"\\jfr.on").c_str()) != INVALID_FILE_ATTRIBUTES) {
+        extra.push_back("-XX:StartFlightRecording=delay=90s,duration=60s,settings=profile,filename=" + local + "\\bench.jfr");
+    }
     std::vector<JavaVMOption> vmOpts;
+    for (auto& o : extra) {
+        LogLine("jvm option: %s", o.c_str());
+        vmOpts.push_back({ const_cast<char*>(o.c_str()), nullptr });
+    }
     for (auto& o : opts) {
         LogLine("jvm option: %s", o.c_str());
         vmOpts.push_back({ const_cast<char*>(o.c_str()), nullptr });

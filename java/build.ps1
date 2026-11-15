@@ -31,7 +31,9 @@ $modules = @(
     "java.net.http", "java.scripting", "java.sql", "java.xml", "jdk.crypto.ec",
     "jdk.unsupported", "jdk.zipfs", "jdk.localedata",
     # mixin (fabric) uses javax.annotation.processing from here
-    "java.compiler"
+    "java.compiler",
+    # flight recorder, only used when LocalState\jfr.on exists (profiling)
+    "jdk.jfr"
 ) -join ","
 
 & (Join-Path $Jdk "bin\jlink.exe") --module-path (Join-Path $Jdk "jmods") --add-modules $modules `
