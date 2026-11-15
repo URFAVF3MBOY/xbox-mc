@@ -8,8 +8,10 @@
 | [MobileGlues](https://github.com/MobileGL-Dev/MobileGlues) with my windows patches in `mobileglues/` | desktop OpenGL on top of GLES | LGPL-2.1 (`mobileglues/LICENSE`) |
 | [OpenJDK](https://adoptium.net) 17 (Temurin, cut down with jlink) | the java runtime | GPLv2 with Classpath Exception (`jre\legal` in the package) |
 | [LWJGL](https://www.lwjgl.org) 3.2.2 | java bindings for GL and GLFW | BSD-3-Clause (`licenses/LWJGL.txt`) |
+| [JNA](https://github.com/java-native-access/jna) 5.8.0, only `jnidispatch.dll` | minecraft uses it for system info | Apache-2.0 or LGPL-2.1 |
 
 The app package has all the license texts in `licenses\` and `jre\legal\`.
 
-Planned: Fabric. Minecraft itself is never included; the launcher downloads it
-from Mojang after sign-in.
+Not in the package, downloaded by the launcher on the console: Minecraft (from
+Mojang, after sign-in), Fabric Loader (from Fabric) and the mods Fabric API,
+Sodium, Lithium, LazyDFU, FerriteCore and Starlight (from Modrinth).
