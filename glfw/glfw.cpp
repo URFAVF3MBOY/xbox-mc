@@ -17,6 +17,7 @@
 #include <winrt/Windows.System.h>
 #include <winrt/Windows.UI.Core.h>
 #include <winrt/Windows.UI.Input.h>
+#include <winrt/Windows.UI.ViewManagement.h>
 
 #include <windows.h>
 
@@ -838,6 +839,16 @@ API void xmcglfw_attach(void* coreWindow)
 {
     winrt::copy_from_abi(g_coreWindow, coreWindow);
     g_dispatcher = g_coreWindow.Dispatcher();
+    // on the xbox apps get put inside the tv safe area by default, which shifts
+    // and crops the picture. use the whole screen, minecraft's gui already keeps
+    // its stuff away from the edges
+    try {
+        auto view = winrt::Windows::UI::ViewManagement::ApplicationView::GetForCurrentView();
+        bool ok = view.SetDesiredBoundsMode(winrt::Windows::UI::ViewManagement::ApplicationViewBoundsMode::UseCoreWindow);
+        Log("full screen bounds: %s", ok ? "yes" : "no");
+    } catch (...) {
+        Log("full screen bounds: failed");
+    }
     auto display = winrt::Windows::Graphics::Display::DisplayInformation::GetForCurrentView();
     g_scale = display.RawPixelsPerViewPixel();
     UiUpdateBounds();
