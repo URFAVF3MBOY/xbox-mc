@@ -138,18 +138,32 @@ $appx = Join-Path $OutDir "xbox-mc_$Version`_x64.appx"
 if ($LASTEXITCODE -ne 0) { throw "makeappx failed" }
 
 if (-not $PfxPath) {
+    # one dev cert that gets reused (staging\cert, not in git). the xbox can only
+    # update the app in place when the cert stays the same, a new one meant
+    # uninstalling, which also wipes LocalState (game files, login)
     $certDir = Join-Path $root "staging\cert"
     New-Item -ItemType Directory -Force $certDir | Out-Null
     $PfxPath = Join-Path $certDir "xbox-mc-dev.pfx"
-    $PfxPassword = [Guid]::NewGuid().ToString("N")
-    $cert = New-SelfSignedCertificate -Type Custom -Subject $Publisher `
-        -KeyUsage DigitalSignature -FriendlyName "xbox-mc dev signing" `
-        -CertStoreLocation "Cert:\CurrentUser\My" `
-        -TextExtension @("2.5.29.37={text}1.3.6.1.5.5.7.3.3", "2.5.29.19={text}")
-    $sec = ConvertTo-SecureString $PfxPassword -AsPlainText -Force
-    Export-PfxCertificate -Cert $cert -FilePath $PfxPath -Password $sec | Out-Null
-    Export-Certificate -Cert $cert -FilePath (Join-Path $OutDir "xbox-mc-dev.cer") | Out-Null
-    Remove-Item "Cert:\CurrentUser\My\$($cert.Thumbprint)"
+    $passFile = Join-Path $certDir "password.txt"
+    if ((Test-Path $PfxPath) -and (Test-Path $passFile)) {
+        $PfxPassword = (Get-Content $passFile -Raw).Trim()
+        $existing = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 ($PfxPath, $PfxPassword)
+        [IO.File]::WriteAllBytes((Join-Path $OutDir "xbox-mc-dev.cer"), $existing.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Cert))
+        Write-Host "signing with the existing dev cert ($($existing.Thumbprint))"
+    } else {
+        $PfxPassword = [Guid]::NewGuid().ToString("N")
+        $cert = New-SelfSignedCertificate -Type Custom -Subject $Publisher `
+            -KeyUsage DigitalSignature -FriendlyName "xbox-mc dev signing" `
+            -CertStoreLocation "Cert:\CurrentUser\My" `
+            -NotAfter (Get-Date).AddYears(5) `
+            -TextExtension @("2.5.29.37={text}1.3.6.1.5.5.7.3.3", "2.5.29.19={text}")
+        $sec = ConvertTo-SecureString $PfxPassword -AsPlainText -Force
+        Export-PfxCertificate -Cert $cert -FilePath $PfxPath -Password $sec | Out-Null
+        Set-Content -Encoding ascii $passFile $PfxPassword
+        Export-Certificate -Cert $cert -FilePath (Join-Path $OutDir "xbox-mc-dev.cer") | Out-Null
+        Remove-Item "Cert:\CurrentUser\My\$($cert.Thumbprint)"
+        Write-Host "made a new dev cert ($($cert.Thumbprint)), reused from now on"
+    }
 }
 & (Join-Path $sdkBin "signtool.exe") sign /q /fd SHA256 /f $PfxPath /p $PfxPassword $appx
 if ($LASTEXITCODE -ne 0) { throw "signtool failed" }
