@@ -85,6 +85,12 @@ foreach ($d in @("vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll")) {
     Copy-Item (Join-Path $JavaDir "jre\bin\$d") $stage
 }
 # angle needs this to compile shaders
+# login client id, only on my own machine (local\ is in .gitignore). ci builds
+# have none, then the launcher says so. it can also go in LocalState instead.
+$clientId = Join-Path $root "local\client_id.txt"
+if (Test-Path $clientId) { Copy-Item $clientId $stage; Write-Host "client id: from local\client_id.txt" }
+else { Write-Host "client id: none" }
+
 # license texts that have to ship with the dlls (the jre has its own in jre\legal)
 $lic = Join-Path $stage "licenses"
 New-Item -ItemType Directory -Force $lic | Out-Null

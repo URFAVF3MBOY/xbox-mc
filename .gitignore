@@ -11,3 +11,5 @@ cache/
 logs/
 
 handoff/
+# my login client id, never in git
+local/
