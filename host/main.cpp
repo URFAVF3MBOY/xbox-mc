@@ -1,11 +1,10 @@
-// step 4: an lwjgl window from java. the host only owns the CoreWindow and the
-// jvm, java draws through my glfw3.dll (CoreWindow + EGL via mobileglues).
-// green + triangle (drawn by java) = works, stick / arrows move it, A / space
-// changes its color. if java never gets a window up the host paints:
-// red = jvm.dll didnt load, orange = jvm or WindowTest failed,
+// step 5: the launcher from java (login + minecraft download). the host only
+// owns the CoreWindow and the jvm, java draws through my glfw3.dll (CoreWindow +
+// EGL via mobileglues). if java never gets a window up the host paints:
+// red = jvm.dll didnt load, orange = jvm or the launcher failed,
 // blue = glfw3.dll didnt load.
-// logs in LocalState: host.log (this + jvm output), java.log (WindowTest + lwjgl
-// debug), glfw.log, MG\latest.log (mobileglues), hs_err_pid*.log if the jvm crashes
+// logs in LocalState: host.log (this + jvm output), launcher.log, glfw.log,
+// MG\latest.log (mobileglues), hs_err_pid*.log if the jvm crashes
 
 #include <winrt/Windows.ApplicationModel.h>
 #include <winrt/Windows.ApplicationModel.Core.h>
@@ -39,7 +38,7 @@ using namespace winrt::Windows::UI::Core;
 
 namespace {
 
-const char* kMainClass = "WindowTest";
+const char* kMainClass = "Launcher";
 
 FILE* g_log = nullptr;
 
@@ -214,6 +213,8 @@ void RunJava()
     std::string opts[] = {
         "-Djava.class.path=" + cp,
         "-Duser.home=" + local,
+        // so java can find client_id.txt in the package
+        "-Dxmc.install=" + install,
         "-Djava.io.tmpdir=" + tmp,
         "-Xmx2560m",
         // no shared memory perf file, it wants a desktop temp dir
