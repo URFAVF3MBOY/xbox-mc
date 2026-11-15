@@ -1194,13 +1194,20 @@ API GLFWwindow* glfwCreateWindow(int width, int height, const char* title, GLFWm
         return nullptr;
     }
 
+    int realW = 0, realH = 0;
+    SurfaceSize(win, &realW, &realH);
     if (onCoreWindow) {
         g_main = win;
         g_hasSurface = true;
-        SurfaceSize(win, &win->lastW, &win->lastH);
+        // the CoreWindow is always full size, not what was asked for. remember the
+        // asked size, so the first glfwPollEvents sees the difference and sends the
+        // real size to the size callbacks (minecraft only learns it from there,
+        // otherwise the picture and the mouse are scaled for 854x480)
+        win->lastW = width;
+        win->lastH = height;
     }
     g_windows.push_back(win);
-    Log("window %p made (%s, %dx%d)", win, onCoreWindow ? "CoreWindow" : "pbuffer", win->lastW, win->lastH);
+    Log("window %p made (%s, %dx%d, asked for %dx%d)", win, onCoreWindow ? "CoreWindow" : "pbuffer", realW, realH, width, height);
     return reinterpret_cast<GLFWwindow*>(win);
 }
 
