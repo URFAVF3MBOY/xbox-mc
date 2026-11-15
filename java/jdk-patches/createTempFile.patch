@@ -1,0 +1,19 @@
+diff --git a/java.base/java/io/WinNTFileSystem.java b/java.base/java/io/WinNTFileSystem.java
+index 0fabd6f..d72c12e 100644
+--- a/java.base/java/io/WinNTFileSystem.java
++++ b/java.base/java/io/WinNTFileSystem.java
+@@ -703,7 +703,13 @@ class WinNTFileSystem extends FileSystem {
+                 }
+             }
+         }
+-        return getNameMax0(s);
++        // xbox-mc: the uwp app sandbox isn't allowed to ask about the volume
++        // (C:\), which made every File.createTempFile fail (no level.dat saves)
++        try {
++            return getNameMax0(s);
++        } catch (Exception x) {
++            return 255;
++        }
+     }
+ 
+     @Override
