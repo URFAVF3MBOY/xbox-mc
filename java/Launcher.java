@@ -177,7 +177,13 @@ public class Launcher {
                     if (!java.nio.file.Files.exists(trigger)) continue;
                     java.nio.file.Files.deleteIfExists(trigger);
                     log.println("profile: recording 60 s");
-                    try (jdk.jfr.Recording rec = new jdk.jfr.Recording(jdk.jfr.Configuration.getConfiguration("default"))) {
+                    // only the samplers + gc. jfr's periodic os events (cpu load,
+                    // processes, network...) crash the jvm in the xbox sandbox
+                    try (jdk.jfr.Recording rec = new jdk.jfr.Recording()) {
+                        rec.enable("jdk.ExecutionSample").withPeriod(java.time.Duration.ofMillis(20));
+                        rec.enable("jdk.NativeMethodSample").withPeriod(java.time.Duration.ofMillis(20));
+                        rec.enable("jdk.GarbageCollection");
+                        rec.enable("jdk.GCPhasePause");
                         rec.start();
                         Thread.sleep(60_000);
                         rec.stop();
