@@ -76,7 +76,25 @@ foreach ($a in @("lwjgl", "lwjgl-opengl", "lwjgl-stb", "lwjgl-openal", "lwjgl-ti
         }
     } finally { $zip.Dispose() }
 }
-Write-Host "lwjgl natives: $((Get-ChildItem $natives).Name -join ', ')"
+# jna's dll (minecraft uses jna for the narrator and system info). jna normally
+# unpacks it to temp and loads it from there, a uwp app can only load dlls from
+# its own package, so it ships in natives\. same version minecraft 1.17.1 uses
+$jnaVer = "5.8.0"
+$jnaJar = Join-Path $dl "jna-$jnaVer.jar"
+$jnaUrl = "https://repo1.maven.org/maven2/net/java/dev/jna/jna/$jnaVer/jna-$jnaVer.jar"
+$want = (Invoke-WebRequest -UseBasicParsing "$jnaUrl.sha1").Content
+if ($want -is [byte[]]) { $want = [Text.Encoding]::ASCII.GetString($want) }
+$want = $want.Trim().Split(" ")[0].ToLower()
+if (-not (Test-Path $jnaJar) -or (Get-FileHash -Algorithm SHA1 $jnaJar).Hash.ToLower() -ne $want) {
+    Invoke-WebRequest -UseBasicParsing $jnaUrl -OutFile $jnaJar
+    if ((Get-FileHash -Algorithm SHA1 $jnaJar).Hash.ToLower() -ne $want) { throw "sha1 mismatch for jna" }
+}
+$zip = [IO.Compression.ZipFile]::OpenRead($jnaJar)
+try {
+    [IO.Compression.ZipFileExtensions]::ExtractToFile($zip.GetEntry("com/sun/jna/win32-x86-64/jnidispatch.dll"), (Join-Path $natives "jnidispatch.dll"), $true)
+} finally { $zip.Dispose() }
+
+Write-Host "natives: $((Get-ChildItem $natives).Name -join ', ')"
 
 # test classes
 $classes = Join-Path $out "classes"

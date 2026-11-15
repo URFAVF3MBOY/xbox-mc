@@ -239,8 +239,11 @@ void RunJava()
         "-Duser.dir=" + local + "\\game",
         // no awt windows in a uwp app, fabric shows its errors in the log then
         "-Djava.awt.headless=true",
-        // jna (minecraft's narrator) unpacks its dll here
+        // jna (narrator, system info): its dll ships in natives\, a uwp app
+        // can't load one it unpacked to temp
         "-Djna.tmpdir=" + tmp,
+        "-Djna.boot.library.path=" + install + "\\natives",
+        "-Djna.nounpack=true",
         "-Xmx2560m",
         // no shared memory perf file, it wants a desktop temp dir
         "-XX:-UsePerfData",
