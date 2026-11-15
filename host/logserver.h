@@ -22,6 +22,7 @@ std::vector<LogFile> ListLogs()
         { "latest.log", "game\\logs\\latest.log" },
         { "host.log", "host.log" },
         { "glfw.log", "glfw.log" },
+        { "xbox.jfr", "xbox.jfr" },
         { "mobileglues.log", "MG\\latest.log" },
     };
     for (auto& f : fixed) {
@@ -54,7 +55,8 @@ std::string ReadShared(std::filesystem::path const& p)
     if (h == INVALID_HANDLE_VALUE) return "(can't open the file)";
     LARGE_INTEGER size{};
     GetFileSizeEx(h, &size);
-    const long long maxBytes = 4LL << 20;
+    // logs: the end is what matters. profiles have to arrive whole
+    const long long maxBytes = p.extension() == L".jfr" ? (1LL << 40) : (4LL << 20);
     std::string text;
     if (size.QuadPart > maxBytes) {
         LARGE_INTEGER pos{};
@@ -114,6 +116,10 @@ std::string SettingsPage(std::string const& query)
         if (_wfopen_s(&f, flag.c_str(), L"w") == 0 && f) fclose(f);
     } else if (query == "noerror=0") {
         DeleteFileW(flag.c_str());
+    } else if (query == "profile=1") {
+        // the launcher records 60 s and saves xbox.jfr
+        FILE* f = nullptr;
+        if (_wfopen_s(&f, (LocalDir() + L"\\jfr.now").c_str(), L"w") == 0 && f) fclose(f);
     }
     bool on = GetFileAttributesW(flag.c_str()) != INVALID_FILE_ATTRIBUTES;
     std::string h = "<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width'>"
@@ -123,6 +129,8 @@ std::string SettingsPage(std::string const& query)
                     "<a href='/settings?noerror=" + std::string(on ? "0" : "1") + "'>turn " + (on ? "off" : "on") + "</a></p>"
                     "<p style='color:#888'>skips GL error checking, less CPU per draw call. if the game glitches or "
                     "crashes with it on, turn it off. applies the next time the app starts.</p>"
+                    "<p><a href='/settings?profile=1'>record a 60 s profile</a> (keep playing normally, "
+                    "after a minute xbox.jfr shows up on the logs page)</p>"
                     "<p><a href='/'>logs</a></p>";
     return Response(200, "text/html; charset=utf-8", h);
 }
@@ -144,6 +152,9 @@ std::string Handle(std::string const& path)
         for (auto& f : ListLogs()) {
             if (f.name != name) continue;
             std::string text = ReadShared(f.path);
+            // the flight recorder profile is binary, always a plain download
+            if (name.size() > 4 && name.compare(name.size() - 4, 4, ".jfr") == 0)
+                return Response(200, "application/octet-stream", text);
             if (query == "raw") return Response(200, "text/plain; charset=utf-8", text);
             std::string page = "<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width'>"
                                "<title>" + HtmlEscape(name) + "</title><style>body{margin:0;background:#16161a;color:#ddd}"

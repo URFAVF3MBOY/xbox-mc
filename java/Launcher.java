@@ -165,6 +165,36 @@ public class Launcher {
     // loaded from the app's own jars (same 3.2.2), so those three are left out.
     // with fabric the main class is fabric's KnotClient, which finds the game
     // and its libraries through java.class.path, so that gets set to the same jars.
+    // "record 60 s profile" on the log server's settings page creates jfr.now,
+    // this records a flight recorder profile while playing and saves it as
+    // LocalState\xbox.jfr (the log server offers it for download)
+    static void startProfileWatcher(Path local) {
+        Thread t = new Thread(() -> {
+            Path trigger = local.resolve("jfr.now");
+            while (true) {
+                try {
+                    Thread.sleep(2000);
+                    if (!java.nio.file.Files.exists(trigger)) continue;
+                    java.nio.file.Files.deleteIfExists(trigger);
+                    log.println("profile: recording 60 s");
+                    try (jdk.jfr.Recording rec = new jdk.jfr.Recording(jdk.jfr.Configuration.getConfiguration("profile"))) {
+                        rec.start();
+                        Thread.sleep(60_000);
+                        rec.stop();
+                        rec.dump(local.resolve("xbox.jfr"));
+                    }
+                    log.println("profile: saved xbox.jfr");
+                } catch (InterruptedException e) {
+                    return;
+                } catch (Throwable e) {
+                    log.println("profile: " + e);
+                }
+            }
+        }, "profile watcher");
+        t.setDaemon(true);
+        t.start();
+    }
+
     static void startGame(Path local, Auth.Account a, Downloader.Result r, Fabric.Result fab) throws Exception {
         Path game = local.resolve("game");
         // some mods (ferritecore) write config\... before anything made the folder
@@ -205,6 +235,7 @@ public class Launcher {
         System.setProperty("fabric.gameJarPath", r.clientJar.toString());
 
         String mainClass = fab != null ? fab.mainClass : (String) r.version.get("mainClass");
+        startProfileWatcher(local);
         log.println("starting " + mainClass + " with " + urls.size() + " jars");
         ClassLoader cl = new java.net.URLClassLoader(urls.toArray(new java.net.URL[0]), Launcher.class.getClassLoader());
         Thread.currentThread().setContextClassLoader(cl);
