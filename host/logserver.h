@@ -92,7 +92,7 @@ std::string IndexPage()
         auto kb = std::filesystem::file_size(f.path, ec) / 1024;
         h += "<a href='/log/" + f.name + "'>" + HtmlEscape(f.name) + " (" + std::to_string(kb) + " KB)</a>";
     }
-    h += "<p style='color:#888'>raw text: add ?raw to a log link</p>";
+    h += "<p style='color:#888'>raw text: add ?raw to a log link</p><p><a href='/settings'>settings</a></p>";
     return h;
 }
 
@@ -104,9 +104,36 @@ std::string Response(int code, const char* type, std::string const& body)
            "\r\n\r\n" + body;
 }
 
+// settings that are easier to flip from the phone than with a new build.
+// only the no-error switch for now, read by the host on the next start
+std::string SettingsPage(std::string const& query)
+{
+    std::wstring flag = LocalDir() + L"\\noerror.on";
+    if (query == "noerror=1") {
+        FILE* f = nullptr;
+        if (_wfopen_s(&f, flag.c_str(), L"w") == 0 && f) fclose(f);
+    } else if (query == "noerror=0") {
+        DeleteFileW(flag.c_str());
+    }
+    bool on = GetFileAttributesW(flag.c_str()) != INVALID_FILE_ATTRIBUTES;
+    std::string h = "<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width'>"
+                    "<title>xbox-mc settings</title><style>body{font:15px sans-serif;margin:16px;background:#16161a;color:#ddd}"
+                    "a{color:#7fd4a0}</style><h2>xbox-mc settings</h2>"
+                    "<p>No-error GL context: <b>" + std::string(on ? "on" : "off") + "</b> &middot; "
+                    "<a href='/settings?noerror=" + std::string(on ? "0" : "1") + "'>turn " + (on ? "off" : "on") + "</a></p>"
+                    "<p style='color:#888'>skips GL error checking, less CPU per draw call. if the game glitches or "
+                    "crashes with it on, turn it off. applies the next time the app starts.</p>"
+                    "<p><a href='/'>logs</a></p>";
+    return Response(200, "text/html; charset=utf-8", h);
+}
+
 std::string Handle(std::string const& path)
 {
     if (path == "/" || path.empty()) return Response(200, "text/html; charset=utf-8", IndexPage());
+    if (path.rfind("/settings", 0) == 0) {
+        auto q = path.find('?');
+        return SettingsPage(q == std::string::npos ? "" : path.substr(q + 1));
+    }
     std::string name = path, query;
     if (auto q = name.find('?'); q != std::string::npos) {
         query = name.substr(q + 1);

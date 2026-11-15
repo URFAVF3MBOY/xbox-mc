@@ -85,10 +85,27 @@ index 51fa101..de30de9 100644
      typedef VkResult (*PFN_vkEnumerateInstanceExtensionProperties)(const char*, uint32_t*, VkExtensionProperties*);
      typedef VkResult (*PFN_vkCreateInstance)(const VkInstanceCreateInfo*, const VkAllocationCallbacks*, VkInstance*);
 diff --git a/MobileGlues-cpp/egl/egl.cpp b/MobileGlues-cpp/egl/egl.cpp
-index 61b2759..deb5657 100644
+index 61b2759..7bc8974 100644
 --- a/MobileGlues-cpp/egl/egl.cpp
 +++ b/MobileGlues-cpp/egl/egl.cpp
-@@ -495,7 +495,11 @@ namespace {
+@@ -373,6 +373,16 @@ namespace {
+ 
+         rewritten.push_back(EGL_CONTEXT_CLIENT_VERSION);
+         rewritten.push_back(kBackendDesktopGlClientVersion);
++#ifdef MG_WINDOWS
++        // xbox-mc: optional no-error context on ANGLE (skips validation of every
++        // call, less cpu per draw). off unless the host sets XMC_NO_ERROR=1,
++        // a wrong call is undefined behaviour then instead of a gl error
++        if (const char* ne = getenv("XMC_NO_ERROR"); ne && ne[0] == '1') {
++            rewritten.push_back(EGL_CONTEXT_OPENGL_NO_ERROR_KHR);
++            rewritten.push_back(EGL_TRUE);
++            LOG_W_FORCE("eglCreateContext: no-error context on");
++        }
++#endif
+         rewritten.push_back(EGL_NONE);
+         *backend_attributes = std::move(rewritten);
+         return true;
+@@ -495,7 +505,11 @@ namespace {
  
  extern "C"
  {
@@ -100,7 +117,7 @@ index 61b2759..deb5657 100644
      EGL_API EGLint eglGetError(void) {
          LOG_D("eglGetError");
          LOAD_EGL(eglGetError)
-@@ -515,6 +519,7 @@ extern "C"
+@@ -515,6 +529,7 @@ extern "C"
      }
  
      EGL_API EGLDisplay eglGetDisplay(EGLNativeDisplayType display_id) {
@@ -108,7 +125,7 @@ index 61b2759..deb5657 100644
          LOG_D("eglGetDisplay, display_id: %p", display_id);
          LOAD_EGL(eglGetDisplay)
          const EGLDisplay dpy = egl_eglGetDisplay(display_id);
-@@ -886,6 +891,7 @@ extern "C"
+@@ -886,6 +901,7 @@ extern "C"
      }
  
      EGL_API EGLDisplay eglGetPlatformDisplay(EGLenum platform, void* native_display, const EGLAttrib* attrib_list) {
@@ -116,7 +133,7 @@ index 61b2759..deb5657 100644
          LOG_D("eglGetPlatformDisplay, platform: %d, native_display: %p, attrib_list: "
                "%p",
                platform, native_display, attrib_list);
-@@ -910,6 +916,7 @@ extern "C"
+@@ -910,6 +926,7 @@ extern "C"
      }
  
      EGL_API EGLDisplay eglGetPlatformDisplayEXT(EGLenum platform, void* native_display, const EGLint* attrib_list) {
@@ -124,7 +141,7 @@ index 61b2759..deb5657 100644
          LOG_D("eglGetPlatformDisplayEXT, platform: %d, native_display: %p, attrib_list: %p", platform, native_display,
                attrib_list);
          LOAD_EGL_OR(eglGetPlatformDisplayEXT, setFrontendError(EGL_BAD_PARAMETER), EGL_NO_DISPLAY)
-@@ -992,6 +999,7 @@ extern "C"
+@@ -992,6 +1009,7 @@ extern "C"
      // GL names still go through glXGetProcAddress, which applies the multi-draw
      // backend mangling.
      EGL_API EGLAPI __eglMustCastToProperFunctionPointerType EGLAPIENTRY eglGetProcAddress(const char* procname) {
