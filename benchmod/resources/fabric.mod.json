@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "id": "xbox-mc-bench",
+  "version": "0.1.0",
+  "name": "xbox-mc bench (dev only)",
+  "environment": "client",
+  "mixins": [ "xbox-mc-bench.mixins.json" ],
+  "depends": { "fabricloader": "*" }
+}

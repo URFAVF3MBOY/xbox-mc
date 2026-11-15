@@ -1,0 +1,7 @@
+{
+  "required": false,
+  "minVersion": "0.8",
+  "package": "xbox_mc.bench",
+  "compatibilityLevel": "JAVA_16",
+  "client": [ "TitleScreenMixin" ]
+}
