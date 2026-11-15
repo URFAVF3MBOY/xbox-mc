@@ -150,7 +150,16 @@ public final class Auth {
         return a;
     }
 
+    // asks for a new code whenever the old one runs out
     private Map<String, Object> deviceCode() throws Exception {
+        while (true) {
+            Map<String, Object> r = deviceCodeOnce();
+            if (r != null) return r;
+            log.println("login code ran out, getting a new one");
+        }
+    }
+
+    private Map<String, Object> deviceCodeOnce() throws Exception {
         ui.status("getting a login code");
         Object dc;
         if (azure) {
@@ -186,9 +195,10 @@ public final class Auth {
             }
             if ("authorization_pending".equals(err)) continue;
             if ("slow_down".equals(err)) { interval += 5; continue; }
+            if ("expired_token".equals(err)) return null;
             throw new IOException("login failed: " + err + " " + Json.str(body, "error_description"));
         }
-        throw new IOException("the login code ran out, restart to get a new one");
+        return null;
     }
 
     private Map<String, Object> refresh(String token) throws Exception {
