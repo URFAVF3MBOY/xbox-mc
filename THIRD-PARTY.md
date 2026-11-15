@@ -14,4 +14,4 @@ The app package has all the license texts in `licenses\` and `jre\legal\`.
 
 Not in the package, downloaded by the launcher on the console: Minecraft (from
 Mojang, after sign-in), Fabric Loader (from Fabric) and the mods Fabric API,
-Sodium, Lithium, LazyDFU, FerriteCore and Starlight (from Modrinth).
+Sodium, Sodium Extra, Reese's Sodium Options, Lithium, LazyDFU, FerriteCore and Starlight (from Modrinth).

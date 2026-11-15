@@ -20,9 +20,11 @@ public final class Fabric {
     static final String META = "https://meta.fabricmc.net/v2/versions/loader/";
     static final String MODRINTH = "https://api.modrinth.com/v2/project/";
 
-    // the mods that get installed and kept up to date. all client side, all
-    // about speed or memory, nothing that changes the game
-    static final String[] MODS = { "fabric-api", "sodium", "lithium", "lazydfu", "ferrite-core", "starlight" };
+    // the mods that get installed and kept up to date. all client side, about
+    // speed, memory or settings (sodium extra + reese's menu), nothing that
+    // changes the game itself
+    static final String[] MODS = { "fabric-api", "sodium", "sodium-extra", "reeses-sodium-options",
+            "lithium", "lazydfu", "ferrite-core", "starlight" };
 
     public static final class Result {
         public String mainClass;
