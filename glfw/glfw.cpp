@@ -655,9 +655,9 @@ void AutoplayTick(Window* win)
 // LocalState\padmod.on: the game has its own controller mod (controllable), so
 // the pad isn't turned into keys and mouse here, it would fire everything twice.
 // checked when a window gets made, the launcher writes it before the game starts.
-// controllable reads the pad through SDL2, so the translation only stays off once
-// SDL2.dll is really loaded. if it never loads (a dll the xbox doesn't have),
-// the pad keeps working the old way
+// controllable reads the pad through SDL2, so the translation only stays off
+// while SDL2 actually sees a controller. if SDL2 never loads or finds nothing
+// (it can't on every setup), the pad keeps working the old way
 bool g_padModActive = false;
 
 void CheckPadMod()
@@ -669,13 +669,13 @@ void CheckPadMod()
 
 // GetModuleHandleW isn't in the uwp headers, find it in kernelbase the same way
 // the host finds LoadLibraryExW
-bool SdlLoaded()
+bool SdlHasPad()
 {
-    static bool loaded = false;
+    static bool has = false;
+    static int lastCount = -1;
     static std::chrono::steady_clock::time_point last{};
-    if (loaded) return true;
     auto now = std::chrono::steady_clock::now();
-    if (now - last < std::chrono::seconds(2)) return false;
+    if (now - last < std::chrono::seconds(2)) return has;
     last = now;
     using GetModuleFn = HMODULE(WINAPI*)(LPCWSTR);
     static GetModuleFn getModule = [] {
@@ -683,18 +683,30 @@ bool SdlLoaded()
         if (!VirtualQuery(reinterpret_cast<void*>(&CreateFile2), &mbi, sizeof(mbi))) return GetModuleFn{};
         return reinterpret_cast<GetModuleFn>(GetProcAddress(static_cast<HMODULE>(mbi.AllocationBase), "GetModuleHandleW"));
     }();
-    if (getModule && getModule(L"SDL2.dll")) {
-        loaded = true;
-        Log("SDL2.dll is loaded, controllable has the pad now");
+    HMODULE sdl = getModule ? getModule(L"SDL2.dll") : nullptr;
+    int count = 0;
+    if (sdl) {
+        // SDL_WasInit(SDL_INIT_JOYSTICK) first, SDL_NumJoysticks before init is useless
+        using WasInitFn = unsigned (*)(unsigned);
+        using NumFn = int (*)(void);
+        auto wasInit = reinterpret_cast<WasInitFn>(GetProcAddress(sdl, "SDL_WasInit"));
+        auto num = reinterpret_cast<NumFn>(GetProcAddress(sdl, "SDL_NumJoysticks"));
+        if (wasInit && num && (wasInit(0x200) & 0x200)) count = num();
     }
-    return loaded;
+    if (count != lastCount) {
+        lastCount = count;
+        if (!sdl) Log("SDL2.dll not loaded, the app keeps the pad");
+        else Log("SDL2 sees %d controller(s), %s", count, count > 0 ? "controllable has the pad now" : "the app keeps the pad");
+    }
+    has = count > 0;
+    return has;
 }
 
 void PadInput(Window* win)
 {
     using namespace pad;
     GLFWgamepadstate s{};
-    if ((g_padModActive && SdlLoaded()) || !win || !ReadPad(0, &s)) {
+    if ((g_padModActive && SdlHasPad()) || !win || !ReadPad(0, &s)) {
         g_showCursor = false;
         return;
     }

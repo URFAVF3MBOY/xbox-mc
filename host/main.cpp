@@ -538,6 +538,14 @@ struct App : implements<App, IFrameworkViewSource, IFrameworkView> {
         std::string mgDir = Narrow(LocalDir() + L"\\MG");
         CreateDirectoryA(mgDir.c_str(), nullptr);
         _putenv_s("MG_DIR_PATH", mgDir.c_str());
+        // SDL2 (controllable on 1.21.11) reads its settings from the environment.
+        // xinput, rawinput, directinput and hid are desktop ways to reach a pad
+        // that don't work in the xbox sandbox, Windows.Gaming.Input is the one that does
+        _putenv_s("SDL_JOYSTICK_WGI", "1");
+        _putenv_s("SDL_XINPUT_ENABLED", "0");
+        _putenv_s("SDL_JOYSTICK_RAWINPUT", "0");
+        _putenv_s("SDL_DIRECTINPUT_ENABLED", "0");
+        _putenv_s("SDL_JOYSTICK_HIDAPI", "0");
         // no-error gl context, switched on the log server's settings page
         if (GetFileAttributesW((LocalDir() + L"\\noerror.on").c_str()) != INVALID_FILE_ATTRIBUTES) {
             _putenv_s("XMC_NO_ERROR", "1");
