@@ -323,7 +323,7 @@ index 726ff47..623e6e5 100644
 +#endif
  }
 diff --git a/MobileGlues-cpp/glx/lookup.cpp b/MobileGlues-cpp/glx/lookup.cpp
-index 7d1ab77..4a227dc 100644
+index 7d1ab77..0f47195 100644
 --- a/MobileGlues-cpp/glx/lookup.cpp
 +++ b/MobileGlues-cpp/glx/lookup.cpp
 @@ -48,6 +48,7 @@ std::string handle_multidraw_func_name(std::string name) {
@@ -334,7 +334,7 @@ index 7d1ab77..4a227dc 100644
      LOG()
      std::string real_func_name = handle_multidraw_func_name(std::string(name));
  #ifdef __APPLE__
-@@ -69,4 +70,10 @@ void* glXGetProcAddress(const char* name) {
+@@ -69,4 +70,22 @@ void* glXGetProcAddress(const char* name) {
  
  void* glXGetProcAddressARB(const char* name) {
      return glXGetProcAddress(name);
@@ -346,18 +346,39 @@ index 7d1ab77..4a227dc 100644
 +void* GLAPIENTRY wglGetProcAddress(const char* name) {
 +    return glXGetProcAddress(name);
 +}
++
++// the context always comes from egl here (glfw3.dll makes it). the current one
++// is the egl context, stable for the whole run (sodium checks that it never
++// changes). making or switching contexts through wgl isn't possible
++void* GLAPIENTRY wglGetCurrentContext(void) { return (void*)eglGetCurrentContext(); }
++void* GLAPIENTRY wglGetCurrentDC(void) { return nullptr; }
++void* GLAPIENTRY wglCreateContext(void*) { return nullptr; }
++void* GLAPIENTRY wglCreateLayerContext(void*, int) { return nullptr; }
++int GLAPIENTRY wglDeleteContext(void*) { return 0; }
++int GLAPIENTRY wglMakeCurrent(void*, void*) { return 0; }
++int GLAPIENTRY wglCopyContext(void*, void*, unsigned int) { return 0; }
++int GLAPIENTRY wglShareLists(void*, void*) { return 0; }
 +#endif
 \ No newline at end of file
 diff --git a/MobileGlues-cpp/glx/lookup.h b/MobileGlues-cpp/glx/lookup.h
-index 0a24dc6..dd78a05 100644
+index 0a24dc6..9186c87 100644
 --- a/MobileGlues-cpp/glx/lookup.h
 +++ b/MobileGlues-cpp/glx/lookup.h
-@@ -17,6 +17,13 @@ extern "C"
+@@ -17,6 +17,22 @@ extern "C"
  
      GLAPI GLAPIENTRY void* glXGetProcAddress(const char* name);
      GLAPI GLAPIENTRY void* glXGetProcAddressARB(const char* name);
 +#ifdef MG_WINDOWS
 +    GLAPI void* GLAPIENTRY wglGetProcAddress(const char* name);
++    // the rest of the classic wgl set, lwjgl wants them all from opengl32
++    GLAPI void* GLAPIENTRY wglGetCurrentContext(void);
++    GLAPI void* GLAPIENTRY wglGetCurrentDC(void);
++    GLAPI void* GLAPIENTRY wglCreateContext(void* dc);
++    GLAPI void* GLAPIENTRY wglCreateLayerContext(void* dc, int layer);
++    GLAPI int GLAPIENTRY wglDeleteContext(void* rc);
++    GLAPI int GLAPIENTRY wglMakeCurrent(void* dc, void* rc);
++    GLAPI int GLAPIENTRY wglCopyContext(void* src, void* dst, unsigned int mask);
++    GLAPI int GLAPIENTRY wglShareLists(void* rc1, void* rc2);
 +    void mg_lazy_init(void);
 +#define MG_LAZY_INIT() mg_lazy_init();
 +#else
