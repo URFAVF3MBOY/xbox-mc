@@ -23,6 +23,7 @@ std::vector<LogFile> ListLogs()
         { "host.log", "host.log" },
         { "glfw.log", "glfw.log" },
         { "xbox.jfr", "xbox.jfr" },
+        { "startup.jfr", "startup.jfr" },
         { "host.prev.log", "host.prev.log" },
         { "launcher.prev.log", "launcher.prev.log" },
         { "mobileglues.log", "MG\\latest.log" },
@@ -122,7 +123,12 @@ std::string SettingsPage(std::string const& query)
         // the launcher records 60 s and saves xbox.jfr
         FILE* f = nullptr;
         if (_wfopen_s(&f, (LocalDir() + L"\\jfr.now").c_str(), L"w") == 0 && f) fclose(f);
+    } else if (query == "startprofile=1") {
+        // the launcher records the first 3 minutes of the next start, startup.jfr
+        FILE* f = nullptr;
+        if (_wfopen_s(&f, (LocalDir() + L"\\jfrstart.on").c_str(), L"w") == 0 && f) fclose(f);
     }
+    bool startArmed = GetFileAttributesW((LocalDir() + L"\\jfrstart.on").c_str()) != INVALID_FILE_ATTRIBUTES;
     bool on = GetFileAttributesW(flag.c_str()) != INVALID_FILE_ATTRIBUTES;
     std::string h = "<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width'>"
                     "<title>xbox-mc settings</title><style>body{font:15px sans-serif;margin:16px;background:#16161a;color:#ddd}"
@@ -133,6 +139,9 @@ std::string SettingsPage(std::string const& query)
                     "crashes with it on, turn it off. applies the next time the app starts.</p>"
                     "<p><a href='/settings?profile=1'>record a 60 s profile</a> (keep playing normally, "
                     "after a minute xbox.jfr shows up on the logs page)</p>"
+                    "<p>" + std::string(startArmed ? "<b>startup profile armed</b>, restart the app"
+                                                   : "<a href='/settings?startprofile=1'>profile the next startup</a>") +
+                    " (records the first 3 minutes of the next start as startup.jfr)</p>"
                     "<p><a href='/'>logs</a></p>";
     return Response(200, "text/html; charset=utf-8", h);
 }

@@ -40,6 +40,7 @@ public class Launcher {
         System.setOut(log);
         System.setErr(log);
         log.println("xbox-mc launcher, minecraft " + VERSION);
+        startStartupProfile(local);
 
         Thread worker = new Thread(() -> work(local, install), "launcher");
         worker.setDaemon(true);
@@ -168,6 +169,39 @@ public class Launcher {
     // "record 60 s profile" on the log server's settings page creates jfr.now,
     // this records a flight recorder profile while playing and saves it as
     // LocalState\xbox.jfr (the log server offers it for download)
+    // "profile the next startup" on the settings page leaves jfrstart.on behind.
+    // then the first 3 minutes of this start get recorded as startup.jfr, same
+    // samplers-only recording as the in-game profile
+    static void startStartupProfile(Path local) {
+        Path trigger = local.resolve("jfrstart.on");
+        if (!java.nio.file.Files.exists(trigger)) return;
+        try {
+            java.nio.file.Files.deleteIfExists(trigger);
+            jdk.jfr.Recording rec = new jdk.jfr.Recording();
+            rec.enable("jdk.ExecutionSample").withPeriod(java.time.Duration.ofMillis(20));
+            rec.enable("jdk.NativeMethodSample").withPeriod(java.time.Duration.ofMillis(20));
+            rec.enable("jdk.GarbageCollection");
+            rec.enable("jdk.GCPhasePause");
+            rec.start();
+            log.println("profile: recording the startup (3 min)");
+            Thread t = new Thread(() -> {
+                try {
+                    Thread.sleep(180_000);
+                    rec.stop();
+                    rec.dump(local.resolve("startup.jfr"));
+                    rec.close();
+                    log.println("profile: saved startup.jfr");
+                } catch (Throwable e) {
+                    log.println("profile: " + e);
+                }
+            }, "startup profile");
+            t.setDaemon(true);
+            t.start();
+        } catch (Throwable e) {
+            log.println("profile: " + e);
+        }
+    }
+
     static void startProfileWatcher(Path local) {
         Thread t = new Thread(() -> {
             Path trigger = local.resolve("jfr.now");
@@ -242,7 +276,8 @@ public class Launcher {
 
         String mainClass = fab != null ? fab.mainClass : (String) r.version.get("mainClass");
         startProfileWatcher(local);
-        log.println("starting " + mainClass + " with " + urls.size() + " jars");
+        log.println(String.format("starting %s with %d jars (%.1f s)", mainClass, urls.size(),
+                java.lang.management.ManagementFactory.getRuntimeMXBean().getUptime() / 1000.0));
         ClassLoader cl = new java.net.URLClassLoader(urls.toArray(new java.net.URL[0]), Launcher.class.getClassLoader());
         Thread.currentThread().setContextClassLoader(cl);
         Class<?> main = Class.forName(mainClass, true, cl);
@@ -294,7 +329,9 @@ public class Launcher {
 
     static void setStatus(String s) {
         status = s;
-        log.println("status: " + s);
+        // seconds since the jvm started, to see where startup time goes
+        double up = java.lang.management.ManagementFactory.getRuntimeMXBean().getUptime() / 1000.0;
+        log.println(String.format("status: %s (%.1f s)", s, up));
     }
 
     static String shortUrl(String u) {
