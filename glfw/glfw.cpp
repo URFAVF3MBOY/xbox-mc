@@ -1028,6 +1028,13 @@ API void glfwInitHint(int hint, int value)
     if (hint == GLFW_JOYSTICK_HAT_BUTTONS) g_hatButtons = value;
 }
 
+// glfw 3.4 bits that lwjgl 3.3.3 (minecraft 1.21) binds. this is the win32
+// "platform" as far as anyone asking is concerned, and memory comes from the crt
+constexpr int GLFW_PLATFORM_WIN32 = 0x00060001;
+API int glfwGetPlatform(void) { return GLFW_PLATFORM_WIN32; }
+API int glfwPlatformSupported(int platform) { return platform == GLFW_PLATFORM_WIN32 ? GLFW_TRUE : GLFW_FALSE; }
+API void glfwInitAllocator(const void*) {}
+
 API void glfwGetVersion(int* major, int* minor, int* rev)
 {
     if (major) *major = 3;
