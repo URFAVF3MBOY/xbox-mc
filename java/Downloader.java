@@ -126,9 +126,20 @@ public final class Downloader {
         // some versions list the same library twice (1.17.1: text2speech), two
         // downloads into the same file at once broke the second one
         java.util.Set<Path> seen = new java.util.HashSet<>();
+        long t0 = System.nanoTime();
         for (Item it : items) if (seen.add(it.file) && !valid(it)) todo.add(it);
-        log.println(items.size() + " files, " + todo.size() + " to download");
+        log.println(items.size() + " files, " + todo.size() + " to download, checked in "
+                + (System.nanoTime() - t0) / 1_000_000 + " ms");
+        saveVerified();
         if (todo.isEmpty()) return;
+        try {
+            fetchTodo(todo, what);
+        } finally {
+            saveVerified();
+        }
+    }
+
+    private void fetchTodo(List<Item> todo, String what) throws Exception {
 
         ui.status(what);
         AtomicInteger done = new AtomicInteger();
@@ -159,10 +170,63 @@ public final class Downloader {
         }
     }
 
+    // files that already passed the sha1 check, with their size and modified time.
+    // hashing every asset again on each start took ages on the xbox, so a file
+    // that still has the same size and time as when it was checked is trusted.
+    // anything changed or missing gets the full check again.
+    private final java.util.concurrent.ConcurrentHashMap<String, String> verified = new java.util.concurrent.ConcurrentHashMap<>();
+    private boolean verifiedLoaded, verifiedChanged;
+
+    private Path verifiedFile() { return game.resolve(".xbox-mc-verified"); }
+
+    private synchronized void loadVerified() {
+        if (verifiedLoaded) return;
+        verifiedLoaded = true;
+        try {
+            if (Files.exists(verifiedFile())) {
+                for (String line : Files.readAllLines(verifiedFile())) {
+                    int i = line.indexOf('\t');
+                    if (i > 0) verified.put(line.substring(0, i), line.substring(i + 1));
+                }
+            }
+        } catch (IOException e) {
+            log.println("couldn't read the verified list: " + e);
+        }
+    }
+
+    private void saveVerified() {
+        if (!verifiedChanged) return;
+        StringBuilder b = new StringBuilder();
+        for (Map.Entry<String, String> e : verified.entrySet()) b.append(e.getKey()).append('\t').append(e.getValue()).append('\n');
+        try {
+            Path tmp = verifiedFile().resolveSibling(".xbox-mc-verified.part");
+            Files.writeString(tmp, b);
+            Files.move(tmp, verifiedFile(), StandardCopyOption.REPLACE_EXISTING);
+            verifiedChanged = false;
+        } catch (IOException e) {
+            log.println("couldn't save the verified list: " + e);
+        }
+    }
+
+    private static String stamp(String sha1, long size, long mtime) { return sha1 + "\t" + size + "\t" + mtime; }
+
+    private void markVerified(Item it) throws IOException {
+        if (it.sha1 == null) return;
+        verified.put(it.file.toString(), stamp(it.sha1.toLowerCase(), Files.size(it.file), Files.getLastModifiedTime(it.file).toMillis()));
+        verifiedChanged = true;
+    }
+
     private boolean valid(Item it) throws IOException {
         if (!Files.exists(it.file)) return false;
-        if (it.size >= 0 && Files.size(it.file) != it.size) return false;
-        return it.sha1 == null || it.sha1.equalsIgnoreCase(sha1(it.file));
+        long size = Files.size(it.file);
+        if (it.size >= 0 && size != it.size) return false;
+        if (it.sha1 == null) return true;
+        loadVerified();
+        long mtime = Files.getLastModifiedTime(it.file).toMillis();
+        if (stamp(it.sha1.toLowerCase(), size, mtime).equals(verified.get(it.file.toString()))) return true;
+        if (!it.sha1.equalsIgnoreCase(sha1(it.file))) return false;
+        markVerified(it);
+        return true;
     }
 
     private void fetch(Item it) throws Exception {
@@ -183,6 +247,7 @@ public final class Downloader {
         }
         // plain move, ATOMIC_MOVE isn't always allowed in the app folder
         Files.move(tmp, it.file, StandardCopyOption.REPLACE_EXISTING);
+        markVerified(it);
     }
 
     static String sha1(Path p) throws IOException {
