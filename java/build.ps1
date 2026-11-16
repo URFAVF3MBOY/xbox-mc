@@ -1,14 +1,17 @@
-# makes the trimmed java runtime + lwjgl + the test classes for the app
-# .\java\build.ps1 -Jdk "C:\Program Files\Eclipse Adoptium\jdk-17.0.19.10-hotspot"
-# output in staging\java:
-#   jre\       jlink runtime
-#   lib\       lwjgl jars
-#   natives\   lwjgl natives (glfw is my own glfw3.dll, not lwjgl's)
-#   classes\   test classes
+# makes the java runtimes + lwjgl + the launcher classes for the app
+# .\java\build.ps1 -Jdk "C:\Program Files\Eclipse Adoptium\jdk-17.0.19.10-hotspot" `
+#                  -Jdk21 "C:\Program Files\Eclipse Adoptium\jdk-21.0.11.10-hotspot"
+# two runtimes, one per minecraft generation (the app restarts into the right one):
+#   1.17.1:  jre\   patch\java.base    lib\   natives\     (java 17, lwjgl 3.2.2, jna 5.8.0)
+#   1.21.11: jre21\ patch21\java.base  lib21\ natives21\   (java 21, lwjgl 3.3.3, jna 5.17.0)
+# output in staging\java, plus:
+#   classes\   launcher classes (built for java 17, run on both)
+#   mods\      my compat mod (1.17.1 only)
 #   include\   jni headers for the host
 
 param(
-    [Parameter(Mandatory = $true)] [string] $Jdk
+    [Parameter(Mandatory = $true)] [string] $Jdk,
+    [Parameter(Mandatory = $true)] [string] $Jdk21
 )
 
 $ErrorActionPreference = "Stop"
@@ -17,132 +20,150 @@ $root = Split-Path $here
 $out = Join-Path $root "staging\java"
 $dl = Join-Path $root "staging\dl"
 $Jdk = (Resolve-Path $Jdk).Path
+$Jdk21 = (Resolve-Path $Jdk21).Path
 
-$ver = (Get-Content (Join-Path $Jdk "release") | Where-Object { $_ -like "JAVA_VERSION=*" }) -replace '.*="?([^"]*)"?', '$1'
+function Get-JdkVersion($jdk) {
+    (Get-Content (Join-Path $jdk "release") | Where-Object { $_ -like "JAVA_VERSION=*" }) -replace '.*="?([^"]*)"?', '$1'
+}
+$ver = Get-JdkVersion $Jdk
+$ver21 = Get-JdkVersion $Jdk21
 Write-Host "JDK $ver at $Jdk"
-if (-not $ver.StartsWith("17")) { throw "need a JDK 17 (minecraft 1.16.5 + fabric run on 17)" }
+Write-Host "JDK $ver21 at $Jdk21"
+if (-not $ver.StartsWith("17")) { throw "-Jdk has to be a JDK 17 (minecraft 1.17.1)" }
+if (-not $ver21.StartsWith("21")) { throw "-Jdk21 has to be a JDK 21 (minecraft 1.21.11)" }
 
 if (Test-Path $out) { Remove-Item -Recurse -Force $out }
 New-Item -ItemType Directory -Force $out, $dl | Out-Null
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+Add-Type -AssemblyName System.IO.Compression.FileSystem
 
-# what 1.16.5 + fabric + lwjgl need, nothing for desktop awt windows
+# downloads a maven file, sha1 checked against the .sha1 next to it
+function Get-Maven($url) {
+    $file = Join-Path $dl ($url -replace '.*/', '')
+    $want = (Invoke-WebRequest -UseBasicParsing "$url.sha1").Content
+    if ($want -is [byte[]]) { $want = [Text.Encoding]::ASCII.GetString($want) }
+    $want = $want.Trim().Split(" ")[0].ToLower()
+    if (-not (Test-Path $file) -or (Get-FileHash -Algorithm SHA1 $file).Hash.ToLower() -ne $want) {
+        Write-Host "downloading $($url -replace '.*/', '')"
+        Invoke-WebRequest -UseBasicParsing $url -OutFile $file
+        if ((Get-FileHash -Algorithm SHA1 $file).Hash.ToLower() -ne $want) { throw "sha1 mismatch for $url" }
+    }
+    return $file
+}
+
+# ---- jre (jlink) ----
+# what minecraft + fabric + lwjgl need, nothing for desktop awt windows
 $modules = @(
     "java.base", "java.desktop", "java.logging", "java.management", "java.naming",
     "java.net.http", "java.scripting", "java.sql", "java.xml", "jdk.crypto.ec",
     "jdk.unsupported", "jdk.zipfs", "jdk.localedata",
     # mixin (fabric) uses javax.annotation.processing from here
     "java.compiler",
-    # flight recorder, only used when LocalState\jfr.on exists (profiling)
+    # flight recorder, only used for the profiles from the settings page
     "jdk.jfr"
 ) -join ","
-
-& (Join-Path $Jdk "bin\jlink.exe") --module-path (Join-Path $Jdk "jmods") --add-modules $modules `
-    --include-locales en --strip-debug --no-header-files --no-man-pages --compress=0 `
-    --output (Join-Path $out "jre")
-if ($LASTEXITCODE -ne 0) { throw "jlink failed" }
-
-# lwjgl, same version minecraft 1.16.5 uses. sha1 checked against maven central
-$lwjgl = "3.2.2"
-$maven = "https://repo1.maven.org/maven2/org/lwjgl"
-[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-function Get-Jar($artifact, $classifier) {
-    $name = if ($classifier) { "$artifact-$lwjgl-$classifier.jar" } else { "$artifact-$lwjgl.jar" }
-    $file = Join-Path $dl $name
-    $url = "$maven/$artifact/$lwjgl/$name"
-    $want = (Invoke-WebRequest -UseBasicParsing "$url.sha1").Content
-    if ($want -is [byte[]]) { $want = [Text.Encoding]::ASCII.GetString($want) }
-    $want = $want.Trim().Split(" ")[0].ToLower()
-    if (-not (Test-Path $file) -or (Get-FileHash -Algorithm SHA1 $file).Hash.ToLower() -ne $want) {
-        Write-Host "downloading $name"
-        Invoke-WebRequest -UseBasicParsing $url -OutFile $file
-        if ((Get-FileHash -Algorithm SHA1 $file).Hash.ToLower() -ne $want) { throw "sha1 mismatch for $name" }
-    }
-    return $file
+function New-Jre($jdk, $name) {
+    # uncompressed: a compressed image crashes the jvm at startup on the xbox.
+    # jdk 21 calls that zip-0 and warns about the old spelling
+    $compress = if ((Get-JdkVersion $jdk).StartsWith("17")) { "--compress=0" } else { "--compress=zip-0" }
+    & (Join-Path $jdk "bin\jlink.exe") --module-path (Join-Path $jdk "jmods") --add-modules $modules `
+        --include-locales en --strip-debug --no-header-files --no-man-pages $compress `
+        --output (Join-Path $out $name)
+    if ($LASTEXITCODE -ne 0) { throw "jlink failed for $name" }
+    $mb = [int]((Get-ChildItem -Recurse (Join-Path $out $name) | Measure-Object Length -Sum).Sum / 1MB)
+    Write-Host "$name is $mb MB"
 }
 
-$lib = Join-Path $out "lib"
-$natives = Join-Path $out "natives"
-New-Item -ItemType Directory -Force $lib, $natives | Out-Null
-foreach ($a in @("lwjgl", "lwjgl-glfw", "lwjgl-opengl")) { Copy-Item (Get-Jar $a "") $lib }
-
-Add-Type -AssemblyName System.IO.Compression.FileSystem
-# minecraft also wants stb (textures), openal (sound), tinyfd and jemalloc
-foreach ($a in @("lwjgl", "lwjgl-opengl", "lwjgl-stb", "lwjgl-openal", "lwjgl-tinyfd", "lwjgl-jemalloc")) {
-    $zip = [IO.Compression.ZipFile]::OpenRead((Get-Jar $a "natives-windows"))
+# ---- lwjgl + jna ----
+# the jars the app loads itself (core, glfw, opengl), and the natives for every
+# lwjgl module minecraft uses. glfw is my own glfw3.dll, not lwjgl's.
+# jna's dll ships too: jna normally unpacks it to temp and loads it from there,
+# a uwp app can only load dlls from its own package
+function New-Lwjgl($lwjgl, $jna, $libName, $nativesName, $modulesWithNatives) {
+    $lib = Join-Path $out $libName
+    $natives = Join-Path $out $nativesName
+    New-Item -ItemType Directory -Force $lib, $natives | Out-Null
+    $maven = "https://repo1.maven.org/maven2/org/lwjgl"
+    foreach ($a in @("lwjgl", "lwjgl-glfw", "lwjgl-opengl")) { Copy-Item (Get-Maven "$maven/$a/$lwjgl/$a-$lwjgl.jar") $lib }
+    foreach ($a in $modulesWithNatives) {
+        $zip = [IO.Compression.ZipFile]::OpenRead((Get-Maven "$maven/$a/$lwjgl/$a-$lwjgl-natives-windows.jar"))
+        try {
+            foreach ($e in $zip.Entries) {
+                # 3.2.2 keeps the x64 dlls in the jar root (*32.dll are 32 bit),
+                # 3.3.x under windows/x64/org/lwjgl/(module/)
+                if (($e.FullName -match '^[a-z_]+\.dll$' -and $e.FullName -notmatch '32\.dll$') -or
+                    $e.FullName -match '^windows/x64/org/lwjgl/([a-z_]+/)?[a-z_]+\.dll$') {
+                    [IO.Compression.ZipFileExtensions]::ExtractToFile($e, (Join-Path $natives $e.Name), $true)
+                }
+            }
+        } finally { $zip.Dispose() }
+    }
+    $zip = [IO.Compression.ZipFile]::OpenRead((Get-Maven "https://repo1.maven.org/maven2/net/java/dev/jna/jna/$jna/jna-$jna.jar"))
     try {
-        foreach ($e in $zip.Entries) {
-            # 3.2.2 keeps the x64 dlls in the jar root, *32.dll are the 32 bit ones
-            if ($e.FullName -match '^[a-z_]+\.dll$' -and $e.FullName -notmatch '32\.dll$') {
-                [IO.Compression.ZipFileExtensions]::ExtractToFile($e, (Join-Path $natives $e.Name), $true)
+        [IO.Compression.ZipFileExtensions]::ExtractToFile($zip.GetEntry("com/sun/jna/win32-x86-64/jnidispatch.dll"), (Join-Path $natives "jnidispatch.dll"), $true)
+    } finally { $zip.Dispose() }
+    Write-Host "$nativesName`: $((Get-ChildItem $natives).Name -join ', ')"
+}
+
+# ---- jdk fixes for the app sandbox ----
+# patches in java\jdk-patches, against the jdk's own src.zip (they apply to 17
+# and 21). toRealPath walks every folder from C:\ and the sandbox can't look into
+# C:\Users\<me>. the classes get loaded with --patch-module java.base
+$git = (Get-Command git.exe -All | Where-Object { $_.Source -like "*.exe" } | Select-Object -First 1).Source
+function New-JdkPatch($jdk, $srcName, $patchName) {
+    $psrc = Join-Path $out $srcName
+    $pout = Join-Path $out "$patchName\java.base"
+    New-Item -ItemType Directory -Force $psrc, $pout | Out-Null
+    $srcZip = [IO.Compression.ZipFile]::OpenRead((Join-Path $jdk "lib\src.zip"))
+    $patched = @()
+    try {
+        foreach ($p in Get-ChildItem (Join-Path $here "jdk-patches") -Filter *.patch) {
+            foreach ($f in (Select-String -Path $p.FullName -Pattern '^\+\+\+ b/(.+)$').Matches) {
+                $rel = $f.Groups[1].Value
+                $dest = Join-Path $psrc $rel
+                New-Item -ItemType Directory -Force (Split-Path $dest) | Out-Null
+                [IO.Compression.ZipFileExtensions]::ExtractToFile($srcZip.GetEntry($rel), $dest, $true)
+                $patched += $dest
             }
         }
-    } finally { $zip.Dispose() }
-}
-# jna's dll (minecraft uses jna for the narrator and system info). jna normally
-# unpacks it to temp and loads it from there, a uwp app can only load dlls from
-# its own package, so it ships in natives\. same version minecraft 1.17.1 uses
-$jnaVer = "5.8.0"
-$jnaJar = Join-Path $dl "jna-$jnaVer.jar"
-$jnaUrl = "https://repo1.maven.org/maven2/net/java/dev/jna/jna/$jnaVer/jna-$jnaVer.jar"
-$want = (Invoke-WebRequest -UseBasicParsing "$jnaUrl.sha1").Content
-if ($want -is [byte[]]) { $want = [Text.Encoding]::ASCII.GetString($want) }
-$want = $want.Trim().Split(" ")[0].ToLower()
-if (-not (Test-Path $jnaJar) -or (Get-FileHash -Algorithm SHA1 $jnaJar).Hash.ToLower() -ne $want) {
-    Invoke-WebRequest -UseBasicParsing $jnaUrl -OutFile $jnaJar
-    if ((Get-FileHash -Algorithm SHA1 $jnaJar).Hash.ToLower() -ne $want) { throw "sha1 mismatch for jna" }
-}
-$zip = [IO.Compression.ZipFile]::OpenRead($jnaJar)
-try {
-    [IO.Compression.ZipFileExtensions]::ExtractToFile($zip.GetEntry("com/sun/jna/win32-x86-64/jnidispatch.dll"), (Join-Path $natives "jnidispatch.dll"), $true)
-} finally { $zip.Dispose() }
-
-Write-Host "natives: $((Get-ChildItem $natives).Name -join ', ')"
-
-# test classes
-$classes = Join-Path $out "classes"
-$cp = (Get-ChildItem $lib -Filter *.jar).FullName -join ";"
-& (Join-Path $Jdk "bin\javac.exe") -encoding UTF-8 -cp $cp -d $classes (Get-ChildItem $here -Filter *.java).FullName
-if ($LASTEXITCODE -ne 0) { throw "javac failed" }
-
-# jdk fixes for the app sandbox (patches in java\jdk-patches, against the jdk's
-# own src.zip). toRealPath walks every folder from C:\ and the sandbox can't look
-# into C:\Users\<me>. the classes get loaded with --patch-module java.base
-$psrc = Join-Path $out "jdk-src"
-$pout = Join-Path $out "patch\java.base"
-New-Item -ItemType Directory -Force $psrc, $pout | Out-Null
-$srcZip = [IO.Compression.ZipFile]::OpenRead((Join-Path $Jdk "lib\src.zip"))
-$patched = @()
-try {
+    } finally { $srcZip.Dispose() }
+    # the source sits inside this repo, so git apply needs --directory (from the
+    # repo root), otherwise it quietly skips the file
     foreach ($p in Get-ChildItem (Join-Path $here "jdk-patches") -Filter *.patch) {
-        foreach ($f in (Select-String -Path $p.FullName -Pattern '^\+\+\+ b/(.+)$').Matches) {
-            $rel = $f.Groups[1].Value
-            $dest = Join-Path $psrc $rel
-            New-Item -ItemType Directory -Force (Split-Path $dest) | Out-Null
-            [IO.Compression.ZipFileExtensions]::ExtractToFile($srcZip.GetEntry($rel), $dest, $true)
-            $patched += $dest
-        }
+        Push-Location $root
+        & $git apply --whitespace=nowarn --directory=staging/java/$srcName $p.FullName
+        $ok = $LASTEXITCODE -eq 0
+        Pop-Location
+        if (-not $ok) { throw "jdk patch $($p.Name) failed for $srcName" }
     }
-} finally { $srcZip.Dispose() }
-$git = (Get-Command git.exe -All | Where-Object { $_.Source -like "*.exe" } | Select-Object -First 1).Source
-# jdk-src sits inside this repo, so git apply needs --directory (from the repo
-# root), otherwise it quietly skips the file
-foreach ($p in Get-ChildItem (Join-Path $here "jdk-patches") -Filter *.patch) {
-    Push-Location $root
-    & $git apply --whitespace=nowarn --directory=staging/java/jdk-src $p.FullName
-    $ok = $LASTEXITCODE -eq 0
-    Pop-Location
-    if (-not $ok) { throw "jdk patch $($p.Name) failed" }
+    foreach ($f in $patched) {
+        if (-not (Select-String -Path $f -SimpleMatch "xbox-mc" -Quiet)) { throw "jdk patch didn't change $f" }
+    }
+    # through cmd: javac warns about internal api (it's the jdk itself), and
+    # powershell 5 treats anything on stderr as an error
+    $javac = Join-Path $jdk "bin\javac.exe"
+    $files = ($patched | ForEach-Object { "`"$_`"" }) -join " "
+    $jout = cmd /c "`"$javac`" -nowarn --patch-module `"java.base=$(Join-Path $psrc 'java.base')`" -d `"$pout`" $files 2>&1"
+    if ($LASTEXITCODE -ne 0) { $jout | Write-Host; throw "jdk patch compile failed for $patchName" }
+    Write-Host "$patchName`: $((Get-ChildItem -Recurse $pout -Filter *.class).Count) classes"
 }
-foreach ($f in $patched) {
-    if (-not (Select-String -Path $f -SimpleMatch "xbox-mc" -Quiet)) { throw "jdk patch didn't change $f" }
-}
-# through cmd: javac warns about internal api (it's the jdk itself), and
-# powershell 5 treats anything on stderr as an error
-$javac = Join-Path $Jdk "bin\javac.exe"
-$files = ($patched | ForEach-Object { "`"$_`"" }) -join " "
-$jout = cmd /c "`"$javac`" -nowarn --patch-module `"java.base=$(Join-Path $psrc 'java.base')`" -d `"$pout`" $files 2>&1"
-if ($LASTEXITCODE -ne 0) { $jout | Write-Host; throw "jdk patch compile failed" }
-Write-Host "jdk patches: $((Get-ChildItem -Recurse $pout -Filter *.class).Count) classes"
+
+# minecraft 1.17.1: java 17, lwjgl 3.2.2, jna 5.8.0
+New-Jre $Jdk "jre"
+New-Lwjgl "3.2.2" "5.8.0" "lib" "natives" @("lwjgl", "lwjgl-opengl", "lwjgl-stb", "lwjgl-openal", "lwjgl-tinyfd", "lwjgl-jemalloc")
+New-JdkPatch $Jdk "jdk-src" "patch"
+
+# minecraft 1.21.11: java 21, lwjgl 3.3.3 (adds freetype), jna 5.17.0
+New-Jre $Jdk21 "jre21"
+New-Lwjgl "3.3.3" "5.17.0" "lib21" "natives21" @("lwjgl", "lwjgl-opengl", "lwjgl-stb", "lwjgl-openal", "lwjgl-tinyfd", "lwjgl-jemalloc", "lwjgl-freetype")
+New-JdkPatch $Jdk21 "jdk21-src" "patch21"
+
+# launcher + test classes, against lwjgl 3.2.2 for java 17. the few lwjgl calls
+# the launcher makes are the same in 3.3.3, so the classes run on both runtimes
+$classes = Join-Path $out "classes"
+$cp = (Get-ChildItem (Join-Path $out "lib") -Filter *.jar).FullName -join ";"
+& (Join-Path $Jdk "bin\javac.exe") -encoding UTF-8 --release 17 -cp $cp -d $classes (Get-ChildItem $here -Filter *.java).FullName
+if ($LASTEXITCODE -ne 0) { throw "javac failed" }
 
 # my compat mod (compatmod\): mixins that make sodium work on the xbox one.
 # sodium and mixin are only needed to compile it, they don't go in the package
@@ -159,16 +180,12 @@ $sv = $versions | Where-Object { $_.version_number -eq $sodiumVer } | Select-Obj
 if (-not $sv) { throw "sodium $sodiumVer not on modrinth" }
 $sf = $sv.files | Select-Object -First 1
 $sodiumJar = Get-Checked $sf.url $sf.hashes.sha1 (Join-Path $dl $sf.filename)
-$mixinVer = "0.17.5+mixin.0.8.7"
-$mixinUrl = "https://maven.fabricmc.net/net/fabricmc/sponge-mixin/$mixinVer/sponge-mixin-$mixinVer.jar"
-$mixinSha = ((Invoke-WebRequest -UseBasicParsing "$mixinUrl.sha1").Content)
-if ($mixinSha -is [byte[]]) { $mixinSha = [Text.Encoding]::ASCII.GetString($mixinSha) }
-$mixinJar = Get-Checked $mixinUrl $mixinSha.Trim().Split(" ")[0].ToLower() (Join-Path $dl "sponge-mixin-$mixinVer.jar")
+$mixinJar = Get-Maven "https://maven.fabricmc.net/net/fabricmc/sponge-mixin/0.17.5+mixin.0.8.7/sponge-mixin-0.17.5+mixin.0.8.7.jar"
 
 $cmSrc = Join-Path $root "compatmod"
 $cmOut = Join-Path $out "compatmod-classes"
 New-Item -ItemType Directory -Force $cmOut | Out-Null
-$cmCp = (@($sodiumJar, $mixinJar) + (Get-ChildItem $lib -Filter *.jar).FullName) -join ";"
+$cmCp = (@($sodiumJar, $mixinJar) + (Get-ChildItem (Join-Path $out "lib") -Filter *.jar).FullName) -join ";"
 # -proc:none: the mixin jar brings an annotation processor (refmaps), not needed
 # here since nothing points at minecraft's own names
 & (Join-Path $Jdk "bin\javac.exe") -encoding UTF-8 --release 16 -proc:none -cp $cmCp -d $cmOut (Get-ChildItem -Recurse (Join-Path $cmSrc "src") -Filter *.java).FullName
@@ -184,6 +201,3 @@ $inc = Join-Path $out "include"
 New-Item -ItemType Directory -Force $inc | Out-Null
 Copy-Item (Join-Path $Jdk "include\jni.h") $inc
 Copy-Item (Join-Path $Jdk "include\win32\jni_md.h") $inc
-
-$mb = [int]((Get-ChildItem -Recurse (Join-Path $out "jre") | Measure-Object Length -Sum).Sum / 1MB)
-Write-Host "jre is $mb MB"

@@ -221,18 +221,84 @@ std::string ExceptionText(JNIEnv* env)
     return text;
 }
 
+// which java + lwjgl this start uses. the launcher writes LocalState\runtime.txt
+// when a different minecraft version gets picked (line 1: 17 or 21, line 2: the
+// game folder) and then restarts the app, since one process only gets one jvm.
+// 17 = minecraft 1.17.1 (java 17, lwjgl 3.2.2), 21 = 1.21.11 (java 21, lwjgl 3.3.3)
+struct JavaRuntime {
+    std::string java = "17";
+    std::string gameFolder = "game";
+    std::wstring jre = L"jre";
+    std::string patch = "patch", lib = "lib", natives = "natives", lwjgl = "3.2.2";
+};
+
+JavaRuntime ReadRuntime()
+{
+    JavaRuntime r;
+    FILE* f = nullptr;
+    if (_wfopen_s(&f, (LocalDir() + L"\\runtime.txt").c_str(), L"r") == 0 && f) {
+        char line[256];
+        for (int i = 0; i < 2 && fgets(line, sizeof(line), f); i++) {
+            std::string l = line;
+            while (!l.empty() && (l.back() == '\n' || l.back() == '\r' || l.back() == ' ')) l.pop_back();
+            if (i == 0 && l == "21") r.java = "21";
+            // a plain folder name inside LocalState, nothing else
+            if (i == 1 && !l.empty() && l.find_first_of("\\/:") == std::string::npos && l.find("..") == std::string::npos)
+                r.gameFolder = l;
+        }
+        fclose(f);
+    }
+    if (r.java == "21") {
+        r.jre = L"jre21";
+        r.patch = "patch21";
+        r.lib = "lib21";
+        r.natives = "natives21";
+        r.lwjgl = "3.3.3";
+    } else {
+        r.gameFolder = "game";
+    }
+    return r;
+}
+
+// the launcher drops LocalState\restart.now after switching versions. restarting
+// is a winrt call, so the host does it. if windows says no, restart.failed tells
+// the launcher to ask for a manual restart instead
+DWORD WINAPI RestartWatcher(void*)
+{
+    std::wstring flag = LocalDir() + L"\\restart.now";
+    while (true) {
+        Sleep(250);
+        if (GetFileAttributesW(flag.c_str()) == INVALID_FILE_ATTRIBUTES) continue;
+        DeleteFileW(flag.c_str());
+        LogLine("restarting for the other minecraft version");
+        AppRestartFailureReason why = AppRestartFailureReason::Other;
+        try {
+            why = CoreApplication::RequestRestartAsync(L"").get();
+        } catch (...) {
+        }
+        LogLine("restart request failed (%d)", static_cast<int>(why));
+        FILE* f = nullptr;
+        if (_wfopen_s(&f, (LocalDir() + L"\\restart.failed").c_str(), L"w") == 0 && f) fclose(f);
+    }
+}
+
 void RunJava()
 {
     ProbeSystemDlls();
+    DeleteFileW((LocalDir() + L"\\restart.failed").c_str());
+    if (HANDLE t = CreateThread(nullptr, 0, RestartWatcher, nullptr, 0, nullptr)) CloseHandle(t);
 
     auto t0 = std::chrono::steady_clock::now();
     auto elapsed = [&] {
         return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
     };
 
-    HMODULE jvm = LoadPackagedLibrary(L"jre\\bin\\server\\jvm.dll", 0);
+    JavaRuntime rt = ReadRuntime();
+    LogLine("runtime: java %s, lwjgl %s, folder %s", rt.java.c_str(), rt.lwjgl.c_str(), rt.gameFolder.c_str());
+    std::wstring jvmPath = rt.jre + L"\\bin\\server\\jvm.dll";
+    HMODULE jvm = LoadPackagedLibrary(jvmPath.c_str(), 0);
     if (!jvm) {
-        LogLine("LoadPackagedLibrary(jre\\bin\\server\\jvm.dll) failed, error %lu", GetLastError());
+        LogLine("LoadPackagedLibrary(%ls) failed, error %lu", jvmPath.c_str(), GetLastError());
         SetJava(JavaState::NoJvmDll);
         return;
     }
@@ -254,7 +320,7 @@ void RunJava()
     // minecraft (log4j, options.txt...) writes relative to the current folder,
     // which starts as the read-only package folder. SetCurrentDirectoryW isn't in
     // the uwp headers either, same trick as LoadLibraryExW
-    std::string gameDir = local + "\\game";
+    std::string gameDir = local + "\\" + rt.gameFolder;
     CreateDirectoryA(gameDir.c_str(), nullptr);
     {
         MEMORY_BASIC_INFORMATION mbi{};
@@ -262,31 +328,35 @@ void RunJava()
         SetCwdFn setCwd = nullptr;
         if (VirtualQuery(reinterpret_cast<void*>(&CreateFile2), &mbi, sizeof(mbi)))
             setCwd = reinterpret_cast<SetCwdFn>(GetProcAddress(static_cast<HMODULE>(mbi.AllocationBase), "SetCurrentDirectoryW"));
-        std::wstring wgame = LocalDir() + L"\\game";
+        std::wstring wgame = LocalDir() + L"\\" + std::wstring(rt.gameFolder.begin(), rt.gameFolder.end());
         if (setCwd && setCwd(wgame.c_str())) LogLine("current folder: %s", gameDir.c_str());
         else LogLine("couldn't set the current folder (error %lu)", GetLastError());
     }
 
     std::string cp = install + "\\java";
-    for (auto jar : { "lwjgl", "lwjgl-glfw", "lwjgl-opengl" }) cp += ";" + install + "\\lib\\" + jar + "-3.2.2.jar";
+    for (auto jar : { "lwjgl", "lwjgl-glfw", "lwjgl-opengl" })
+        cp += ";" + install + "\\" + rt.lib + "\\" + jar + "-" + rt.lwjgl + ".jar";
 
     std::string opts[] = {
         "-Djava.class.path=" + cp,
         "-Duser.home=" + local,
         // so java can find client_id.txt in the package
         "-Dxmc.install=" + install,
+        // which runtime this is, the launcher restarts the app if the picked
+        // minecraft version needs the other one
+        "-Dxmc.runtime=" + rt.java,
         // my jdk fixes for the sandbox (java\jdk-patches)
-        "--patch-module=java.base=" + install + "\\patch\\java.base",
+        "--patch-module=java.base=" + install + "\\" + rt.patch + "\\java.base",
         "-Djava.io.tmpdir=" + tmp,
         // java resolves relative paths (config\..., logs\...) against user.dir,
         // which it only reads at startup. the package folder is read-only
-        "-Duser.dir=" + local + "\\game",
+        "-Duser.dir=" + gameDir,
         // no awt windows in a uwp app, fabric shows its errors in the log then
         "-Djava.awt.headless=true",
         // jna (narrator, system info): its dll ships in natives\, a uwp app
         // can't load one it unpacked to temp
         "-Djna.tmpdir=" + tmp,
-        "-Djna.boot.library.path=" + install + "\\natives",
+        "-Djna.boot.library.path=" + install + "\\" + rt.natives,
         "-Djna.nounpack=true",
         // 2 gb heap max: the xbox kills the app over 5 gb in total, and the jvm,
         // mobileglues, angle and textures need room next to the heap
@@ -299,7 +369,7 @@ void RunJava()
         // gc=info: every gc pause shows up in host.log (hitch hunting)
         "-Xlog:all=warning,os=info,gc=info",
         // lwjgl: natives from the package, my glfw, gl through mobileglues
-        "-Dorg.lwjgl.librarypath=" + install + "\\natives",
+        "-Dorg.lwjgl.librarypath=" + install + "\\" + rt.natives,
         "-Dorg.lwjgl.glfw.libname=" + install + "\\glfw3.dll",
         "-Dorg.lwjgl.opengl.libname=" + install + "\\mobileglues.dll",
         "-Dorg.lwjgl.util.Debug=true",

@@ -80,6 +80,11 @@ Copy-Item -Recurse (Join-Path $JavaDir "classes") (Join-Path $stage "java")
 Copy-Item -Recurse (Join-Path $JavaDir "lib") (Join-Path $stage "lib")
 Copy-Item -Recurse (Join-Path $JavaDir "natives") (Join-Path $stage "natives")
 Copy-Item -Recurse (Join-Path $JavaDir "patch") (Join-Path $stage "patch")
+# the second runtime for minecraft 1.21.11 (java 21, lwjgl 3.3.3), picked by the
+# host from LocalState\runtime.txt. both jres use the same vc runtime (14.40)
+foreach ($d in @("jre21", "lib21", "natives21", "patch21")) {
+    Copy-Item -Recurse (Join-Path $JavaDir $d) (Join-Path $stage $d)
+}
 # my own mods that the launcher copies into game\mods (xbox-mc-compat)
 Copy-Item -Recurse (Join-Path $JavaDir "mods") (Join-Path $stage "mods")
 # jvm.dll needs the desktop vc runtime and the loader only looks in the

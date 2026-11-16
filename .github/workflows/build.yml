@@ -70,14 +70,17 @@ jobs:
           path: staging\mg-dll
           key: mg-x64-uwp-${{ hashFiles('mobileglues/**', 'vcpkg.json') }}
 
+      # 17 for minecraft 1.17.1, 21 for 1.21.11
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: |
+            21
+            17
 
-      - name: Build java runtime
+      - name: Build java runtimes
         shell: powershell
-        run: .\java\build.ps1 -Jdk $env:JAVA_HOME
+        run: .\java\build.ps1 -Jdk $env:JAVA_HOME_17_X64 -Jdk21 $env:JAVA_HOME_21_X64
 
       - name: Build app
         shell: powershell
