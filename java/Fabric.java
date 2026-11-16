@@ -24,8 +24,13 @@ public final class Fabric {
     // speed, memory or settings, nothing that changes the game itself.
     // sodium needs my xbox-mc-compat mod on the xbox one (its chunk shader uses a
     // uniform block, the xbox one's gpu driver can't link those)
-    static final String[] MODS = { "fabric-api", "sodium", "sodium-extra", "reeses-sodium-options",
+    static final String[] MODS_1_17 = { "fabric-api", "sodium", "sodium-extra", "reeses-sodium-options",
             "lithium", "lazydfu", "ferrite-core", "starlight", "entityculling" };
+    // 1.21.11 starts with just fabric api. sodium and my compat mod are written
+    // for 1.17.1, the newer ones get tried once the game itself runs
+    static final String[] MODS_1_21 = { "fabric-api" };
+
+    static String[] modsFor(String mc) { return mc.equals("1.17.1") ? MODS_1_17 : MODS_1_21; }
 
     public static final class Result {
         public String mainClass;
@@ -33,12 +38,15 @@ public final class Fabric {
         public String loaderVersion;
     }
 
-    private final Path game;
+    // game = where downloads go (libraries, shared by all versions),
+    // gameDir = this version's own folder (mods, config, saves)
+    private final Path game, gameDir;
     private final Downloader.Ui ui;
     private final java.io.PrintStream log;
 
-    public Fabric(Path game, Downloader.Ui ui, java.io.PrintStream log) {
+    public Fabric(Path game, Path gameDir, Downloader.Ui ui, java.io.PrintStream log) {
         this.game = game;
+        this.gameDir = gameDir;
         this.ui = ui;
         this.log = log;
     }
@@ -81,13 +89,14 @@ public final class Fabric {
     // installs/updates my mod list in game\mods. mods dropped in by hand stay
     public void mods(String mc, Path install) throws Exception {
         ui.status("checking mods");
-        Path dir = game.resolve("mods");
+        Path dir = gameDir.resolve("mods");
         Files.createDirectories(dir);
+        String[] mods = modsFor(mc);
 
         // my own mods ship with the app (install\mods), copied every start so
-        // they're always the version that belongs to this build
+        // they're always the version that belongs to this build. they're for 1.17.1
         Path bundled = install.resolve("mods");
-        if (Files.isDirectory(bundled)) {
+        if (mc.equals("1.17.1") && Files.isDirectory(bundled)) {
             try (java.util.stream.Stream<Path> files = Files.list(bundled)) {
                 for (Path jar : (Iterable<Path>) files::iterator) {
                     Files.copy(jar, dir.resolve(jar.getFileName()), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
@@ -101,7 +110,7 @@ public final class Fabric {
 
         List<Downloader.Item> items = new ArrayList<>();
         Map<String, Object> now = new LinkedHashMap<>();
-        for (String slug : MODS) {
+        for (String slug : mods) {
             Object file;
             try {
                 file = latestFile(slug, mc);
@@ -126,7 +135,7 @@ public final class Fabric {
         new Downloader(game, ui, log).fetchAll(items, "downloading mods");
         // mods I took off the list get removed again
         for (Map.Entry<String, Object> e : installed.entrySet()) {
-            if (!now.containsKey(e.getKey()) && java.util.Arrays.asList(MODS).indexOf(e.getKey()) < 0) {
+            if (!now.containsKey(e.getKey()) && java.util.Arrays.asList(mods).indexOf(e.getKey()) < 0) {
                 Files.deleteIfExists(dir.resolve((String) e.getValue()));
                 log.println("mod " + e.getKey() + " removed");
             }

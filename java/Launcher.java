@@ -1,6 +1,7 @@
-// step 5: the launcher screen. logs in (shows the microsoft code on screen),
-// checks the account owns minecraft, then downloads minecraft and starts it.
-// the game itself starts in step 6. log goes to LocalState\launcher.log
+// the launcher screen. logs in (shows the microsoft code on screen), checks the
+// account owns minecraft, then shows the version switcher and PLAY. after PLAY it
+// downloads that version + fabric and starts it in this same jvm.
+// log goes to LocalState\launcher.log
 
 import static org.lwjgl.glfw.GLFW.*;
 import static org.lwjgl.opengl.GL11.*;
@@ -16,7 +17,20 @@ import org.lwjgl.opengl.GL;
 import org.lwjgl.system.MemoryStack;
 
 public class Launcher {
-    static final String VERSION = "1.17.1";
+    // the versions on offer. runtime = the java + lwjgl the app has to run with
+    // for it (17: java 17 + lwjgl 3.2.2, 21: java 21 + lwjgl 3.3.3), folder = its
+    // own game folder in LocalState so mods and settings don't mix.
+    // switching to a version with the other runtime restarts the app
+    static final String[][] VERSIONS = {
+        { "1.17.1", "17", "game" },
+        { "1.21.11", "21", "game-1.21.11" },
+    };
+    static volatile int selected;
+    static volatile boolean ready, playPressed, restarting, restartFailed;
+    static final Object playLock = new Object();
+
+    static String version() { return VERSIONS[selected][0]; }
+    static String runtime() { return System.getProperty("xmc.runtime", "17"); }
 
     static PrintStream log;
 
@@ -39,7 +53,8 @@ public class Launcher {
         log = new PrintStream(new FileOutputStream(local.resolve("launcher.log").toFile()), true, "UTF-8");
         System.setOut(log);
         System.setErr(log);
-        log.println("xbox-mc launcher, minecraft " + VERSION);
+        loadSelection(local);
+        log.println("xbox-mc launcher, java " + runtime() + ", picked minecraft " + version());
         startStartupProfile(local);
 
         Thread worker = new Thread(() -> work(local, install), "launcher");
@@ -61,8 +76,37 @@ public class Launcher {
 
         double readyAt = -1;
         int frame = 0;
+        boolean wasLeft = false, wasRight = false, wasPlay = false;
+        int ticks = 0;
         while (!glfwWindowShouldClose(window)) {
             glfwPollEvents();
+
+            // version switcher + play: d-pad / LB RB / arrow keys switch, A / enter plays
+            boolean padOk = glfwJoystickIsGamepad(GLFW_JOYSTICK_1) && glfwGetGamepadState(GLFW_JOYSTICK_1, pad);
+            boolean left = glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS
+                    || padOk && (pad.buttons(GLFW_GAMEPAD_BUTTON_DPAD_LEFT) == GLFW_PRESS || pad.buttons(GLFW_GAMEPAD_BUTTON_LEFT_BUMPER) == GLFW_PRESS);
+            boolean right = glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS
+                    || padOk && (pad.buttons(GLFW_GAMEPAD_BUTTON_DPAD_RIGHT) == GLFW_PRESS || pad.buttons(GLFW_GAMEPAD_BUTTON_RIGHT_BUMPER) == GLFW_PRESS);
+            boolean play = glfwGetKey(window, GLFW_KEY_ENTER) == GLFW_PRESS || glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS
+                    || padOk && pad.buttons(GLFW_GAMEPAD_BUTTON_A) == GLFW_PRESS;
+            // LocalState\play.now = PLAY (testing on the pc without a controller)
+            if (++ticks % 30 == 0) {
+                try {
+                    if (java.nio.file.Files.deleteIfExists(local.resolve("play.now"))) play = true;
+                } catch (Exception e) {
+                    // can't delete it, ignore
+                }
+            }
+            boolean choosing = ready && !playPressed && !restarting && error == null;
+            if (choosing) {
+                if (left && !wasLeft) selected = (selected + VERSIONS.length - 1) % VERSIONS.length;
+                if (right && !wasRight) selected = (selected + 1) % VERSIONS.length;
+                if (play && !wasPlay) play(local);
+            }
+            wasLeft = left;
+            wasRight = right;
+            wasPlay = play;
+            if (restarting && !restartFailed && java.nio.file.Files.exists(local.resolve("restart.failed"))) restartFailed = true;
             if (logUrl == null && frame++ % 60 == 0) {
                 try {
                     logUrl = java.nio.file.Files.readString(local.resolve("logurl.txt")).trim();
@@ -97,8 +141,37 @@ public class Launcher {
             float y = h * 0.12f;
             Font.center(q, "XBOX-MC", cx, y, s * 2, 0.4f, 0.8f, 0.5f);
             y += s * 26;
-            Font.center(q, "MINECRAFT JAVA " + VERSION, cx, y, s, 0.75f, 0.75f, 0.8f);
+            Font.center(q, "MINECRAFT JAVA " + version(), cx, y, s, 0.75f, 0.75f, 0.8f);
             y += s * 24;
+
+            if (choosing || restarting) {
+                // version switcher
+                String label = "<   " + version() + "  FABRIC   >";
+                float bw = Font.width(label, s * 1.5f) + s * 16, bh = s * 18;
+                q.rect(cx - bw / 2, y, bw, bh, 0.16f, 0.16f, 0.2f);
+                Font.center(q, label, cx, y + (bh - s * 1.5f * 7) / 2, s * 1.5f, 0.85f, 0.85f, 0.95f);
+                y += bh + s * 8;
+                // play button
+                String pl = restarting ? "RESTARTING" : "PLAY";
+                float pw = Math.max(bw * 0.6f, Font.width(pl, s * 2.5f) + s * 24), ph = s * 26;
+                q.rect(cx - pw / 2 - s, y - s, pw + s * 2, ph + s * 2, 0.55f, 0.95f, 0.65f);
+                q.rect(cx - pw / 2, y, pw, ph, 0.18f, 0.55f, 0.28f);
+                Font.center(q, pl, cx, y + (ph - s * 2.5f * 7) / 2, s * 2.5f, 1, 1, 1);
+                y += ph + s * 10;
+                if (restartFailed) {
+                    Font.center(q, "CLOSE THE APP AND OPEN IT AGAIN", cx, y, s, 1, 0.8f, 0.4f);
+                    y += s * 12;
+                    Font.center(q, "TO START " + version(), cx, y, s, 1, 0.8f, 0.4f);
+                    y += s * 14;
+                } else if (!restarting) {
+                    Font.center(q, "A  PLAY      LB RB  VERSION", cx, y, s * 0.9f, 0.55f, 0.55f, 0.6f);
+                    y += s * 14;
+                    if (!VERSIONS[selected][1].equals(runtime())) {
+                        Font.center(q, "THE APP RESTARTS FOR THIS VERSION", cx, y, s * 0.9f, 0.55f, 0.55f, 0.6f);
+                        y += s * 14;
+                    }
+                }
+            }
 
             String c = code;
             if (c != null) {
@@ -112,8 +185,10 @@ public class Launcher {
                 y += s * 32;
             }
 
-            Font.center(q, status, cx, y, s, 0.85f, 0.85f, 0.9f);
-            y += s * 14;
+            if (!choosing && !restarting) {
+                Font.center(q, status, cx, y, s, 0.85f, 0.85f, 0.9f);
+                y += s * 14;
+            }
 
             int t = total;
             if (t > 0 && !finished) {
@@ -150,8 +225,7 @@ public class Launcher {
             glfwSwapBuffers(window);
 
             // B closes the app (same as the home button would)
-            if (glfwJoystickIsGamepad(GLFW_JOYSTICK_1) && glfwGetGamepadState(GLFW_JOYSTICK_1, pad)
-                    && pad.buttons(GLFW_GAMEPAD_BUTTON_B) == GLFW_PRESS && (finished || bad)) {
+            if (padOk && pad.buttons(GLFW_GAMEPAD_BUTTON_B) == GLFW_PRESS && (finished || bad)) {
                 glfwSetWindowShouldClose(window, true);
             }
         }
@@ -202,6 +276,41 @@ public class Launcher {
         }
     }
 
+    // LocalState\version.txt: the version picked last time
+    static void loadSelection(Path local) {
+        try {
+            String v = java.nio.file.Files.readString(local.resolve("version.txt")).trim();
+            for (int i = 0; i < VERSIONS.length; i++) if (VERSIONS[i][0].equals(v)) selected = i;
+        } catch (Exception e) {
+            // first start: the first version, or the one that fits this runtime
+            for (int i = 0; i < VERSIONS.length; i++) if (VERSIONS[i][1].equals(runtime())) { selected = i; break; }
+        }
+    }
+
+    // PLAY: same runtime -> the worker downloads and starts it. other runtime ->
+    // runtime.txt for the host, then the host restarts the app (restart.now)
+    static void play(Path local) {
+        String[] v = VERSIONS[selected];
+        try {
+            java.nio.file.Files.writeString(local.resolve("version.txt"), v[0] + "\n");
+            if (!v[1].equals(runtime())) {
+                java.nio.file.Files.writeString(local.resolve("runtime.txt"), v[1] + "\n" + v[2] + "\n");
+                java.nio.file.Files.writeString(local.resolve("restart.now"), "\n");
+                restarting = true;
+                setStatus("restarting for minecraft " + v[0]);
+                return;
+            }
+        } catch (Exception e) {
+            e.printStackTrace(log);
+            error = "couldn't save the version: " + e;
+            return;
+        }
+        synchronized (playLock) {
+            playPressed = true;
+            playLock.notifyAll();
+        }
+    }
+
     static void startProfileWatcher(Path local) {
         Thread t = new Thread(() -> {
             Path trigger = local.resolve("jfr.now");
@@ -236,14 +345,19 @@ public class Launcher {
     }
 
     static void startGame(Path local, Auth.Account a, Downloader.Result r, Fabric.Result fab) throws Exception {
-        Path game = local.resolve("game");
+        Path game = local.resolve(VERSIONS[selected][2]);
         // some mods (ferritecore) write config\... before anything made the folder
         java.nio.file.Files.createDirectories(game.resolve("config"));
         java.util.List<Path> jars = new java.util.ArrayList<>();
         if (fab != null) jars.addAll(fab.libraries);
         for (Path lib : r.libraries) {
+            // lwjgl core/glfw/opengl come from the app (same version as the game's)
             String n = lib.getFileName().toString();
-            if (n.equals("lwjgl-3.2.2.jar") || n.equals("lwjgl-glfw-3.2.2.jar") || n.equals("lwjgl-opengl-3.2.2.jar")) continue;
+            if (n.matches("lwjgl(-glfw|-opengl)?-[0-9.]+\\.jar")) continue;
+            // newer versions list their natives jars as libraries. lwjgl would unpack
+            // the dlls from them into temp, and the xbox can't load dlls from there.
+            // the app ships all of them in its natives folder instead
+            if (n.contains("-natives-")) continue;
             jars.add(lib);
         }
         jars.add(r.clientJar);
@@ -260,7 +374,7 @@ public class Launcher {
 
         String[] gameArgs = {
             "--username", a.name,
-            "--version", VERSION,
+            "--version", version(),
             "--gameDir", game.toString(),
             "--assetsDir", r.assetsDir.toString(),
             "--assetIndex", r.assetIndex,
@@ -295,30 +409,42 @@ public class Launcher {
             player = a.name;
             account = a;
 
-            Downloader d = new Downloader(local.resolve("game"), new Downloader.Ui() {
+            // wait for PLAY on the version screen
+            ready = true;
+            setStatus("ready");
+            synchronized (playLock) {
+                while (!playPressed) playLock.wait();
+            }
+            String mc = version();
+            // downloads (libraries, assets, versions) are shared by all versions,
+            // mods/config/saves live in the version's own folder
+            Path root = local.resolve("game");
+            Path gameDir = local.resolve(VERSIONS[selected][2]);
+
+            Downloader d = new Downloader(root, new Downloader.Ui() {
                 public void status(String text) { setStatus(text); }
                 public void progress(int dn, int tt, long b) { done = dn; total = tt; bytes = b; }
             }, log);
-            Downloader.Result r = d.get(VERSION);
+            Downloader.Result r = d.get(mc);
             log.println("client " + r.clientJar + ", " + r.libraries.size() + " libraries, assets " + r.assetIndex);
-            Fabric.defaultOptions(local.resolve("game"));
+            Fabric.defaultOptions(gameDir);
 
             // fabric + mods. if that part breaks the game still starts, just vanilla
             try {
-                Fabric f = new Fabric(local.resolve("game"), new Downloader.Ui() {
+                Fabric f = new Fabric(root, gameDir, new Downloader.Ui() {
                     public void status(String text) { setStatus(text); }
                     public void progress(int dn, int tt, long b) { done = dn; total = tt; bytes = b; }
                 }, log);
-                Fabric.Result fr = f.loader(VERSION);
-                f.mods(VERSION, install);
-                Fabric.tuneSettingsOnce(local.resolve("game"), log);
+                Fabric.Result fr = f.loader(mc);
+                f.mods(mc, install);
+                if (mc.equals("1.17.1")) Fabric.tuneSettingsOnce(gameDir, log);
                 fabric = fr;
             } catch (Exception e) {
                 e.printStackTrace(log);
                 log.println("fabric didn't work, starting vanilla");
             }
             files = r;
-            setStatus("starting minecraft " + VERSION + (fabric != null ? " with fabric" : ""));
+            setStatus("starting minecraft " + mc + (fabric != null ? " with fabric" : ""));
             finished = true;
         } catch (Throwable e) {
             e.printStackTrace(log);
