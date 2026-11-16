@@ -45,7 +45,7 @@ function Get-Maven($url) {
     $want = $want.Trim().Split(" ")[0].ToLower()
     if (-not (Test-Path $file) -or (Get-FileHash -Algorithm SHA1 $file).Hash.ToLower() -ne $want) {
         Write-Host "downloading $($url -replace '.*/', '')"
-        Invoke-WebRequest -UseBasicParsing $url -OutFile $file
+        Invoke-WebRequest -UseBasicParsing -UserAgent "xbox-mc/0.1" $url -OutFile $file
         if ((Get-FileHash -Algorithm SHA1 $file).Hash.ToLower() -ne $want) { throw "sha1 mismatch for $url" }
     }
     return $file
@@ -169,7 +169,7 @@ if ($LASTEXITCODE -ne 0) { throw "javac failed" }
 # sodium and mixin are only needed to compile it, they don't go in the package
 function Get-Checked($url, $sha1, $file) {
     if (-not (Test-Path $file) -or (Get-FileHash -Algorithm SHA1 $file).Hash.ToLower() -ne $sha1) {
-        Invoke-WebRequest -UseBasicParsing $url -OutFile $file
+        Invoke-WebRequest -UseBasicParsing -UserAgent "xbox-mc/0.1" $url -OutFile $file
         if ((Get-FileHash -Algorithm SHA1 $file).Hash.ToLower() -ne $sha1) { throw "sha1 mismatch for $url" }
     }
     return $file
@@ -191,11 +191,41 @@ $cmCp = (@($sodiumJar, $mixinJar) + (Get-ChildItem (Join-Path $out "lib") -Filte
 & (Join-Path $Jdk "bin\javac.exe") -encoding UTF-8 --release 16 -proc:none -cp $cmCp -d $cmOut (Get-ChildItem -Recurse (Join-Path $cmSrc "src") -Filter *.java).FullName
 if ($LASTEXITCODE -ne 0) { throw "compat mod javac failed" }
 Copy-Item (Join-Path $cmSrc "resources\*") $cmOut
-$mods = Join-Path $out "mods"
+# mods\<minecraft version>\ = my mods the launcher copies into that version's mods folder
+$mods = Join-Path $out "mods\1.17.1"
 New-Item -ItemType Directory -Force $mods | Out-Null
 & (Join-Path $Jdk "bin\jar.exe") --create --file (Join-Path $mods "xbox-mc-compat.jar") -C $cmOut .
 if ($LASTEXITCODE -ne 0) { throw "compat mod jar failed" }
 Write-Host "compat mod: $((Get-Item (Join-Path $mods 'xbox-mc-compat.jar')).Length) bytes"
+
+# my compat mod for 1.21.11 (compatmod21\): lets controllable load SDL2 from the
+# package. only needs mixin to compile
+$cm21Src = Join-Path $root "compatmod21"
+$cm21Out = Join-Path $out "compatmod21-classes"
+New-Item -ItemType Directory -Force $cm21Out | Out-Null
+& (Join-Path $Jdk "bin\javac.exe") -encoding UTF-8 --release 17 -proc:none -cp $mixinJar -d $cm21Out (Get-ChildItem -Recurse (Join-Path $cm21Src "src") -Filter *.java).FullName
+if ($LASTEXITCODE -ne 0) { throw "1.21 compat mod javac failed" }
+Copy-Item (Join-Path $cm21Src "resources\*") $cm21Out
+$mods21 = Join-Path $out "mods\1.21.11"
+New-Item -ItemType Directory -Force $mods21 | Out-Null
+& (Join-Path $Jdk "bin\jar.exe") --create --file (Join-Path $mods21 "xbox-mc-compat-21.jar") -C $cm21Out .
+if ($LASTEXITCODE -ne 0) { throw "1.21 compat mod jar failed" }
+
+# SDL2.dll for controllable (1.21.11), taken from the same controllable jar the
+# launcher downloads (pinned in Fabric.java). it goes in natives21 because the
+# xbox can't load the copy controllable would unpack to temp
+$ctrlJar = Get-Checked "https://mediafilez.forgecdn.net/files/7411/286/controllable-fabric-1.21.11-0.25.7.jar" `
+    "f350119178e623cd648d3e5fd2d1e24a2e39863a" (Join-Path $dl "controllable-fabric-1.21.11-0.25.7.jar")
+$zip = [IO.Compression.ZipFile]::OpenRead($ctrlJar)
+try {
+    $inner = Join-Path $dl "controllable-sdl-2.32.10-1.1.0.jar"
+    [IO.Compression.ZipFileExtensions]::ExtractToFile($zip.GetEntry("META-INF/jars/controllable-sdl-2.32.10-1.1.0.jar"), $inner, $true)
+} finally { $zip.Dispose() }
+$zip = [IO.Compression.ZipFile]::OpenRead($inner)
+try {
+    [IO.Compression.ZipFileExtensions]::ExtractToFile($zip.GetEntry("win32-x86-64/SDL2.dll"), (Join-Path $out "natives21\SDL2.dll"), $true)
+} finally { $zip.Dispose() }
+Write-Host "SDL2.dll for controllable: $((Get-Item (Join-Path $out 'natives21\SDL2.dll')).Length) bytes"
 
 $inc = Join-Path $out "include"
 New-Item -ItemType Directory -Force $inc | Out-Null

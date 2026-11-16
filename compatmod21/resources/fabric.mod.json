@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "id": "xbox-mc-compat-21",
+  "version": "0.1.0",
+  "name": "xbox-mc compat (1.21)",
+  "description": "Fixes for running mods on the Xbox One with Minecraft 1.21. Lets Controllable load SDL2 from the app package.",
+  "license": "MIT",
+  "environment": "client",
+  "mixins": [ "xbox-mc-compat-21.mixins.json" ],
+  "depends": { "fabricloader": "*" }
+}

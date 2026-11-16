@@ -652,11 +652,49 @@ void AutoplayTick(Window* win)
     }
 }
 
+// LocalState\padmod.on: the game has its own controller mod (controllable), so
+// the pad isn't turned into keys and mouse here, it would fire everything twice.
+// checked when a window gets made, the launcher writes it before the game starts.
+// controllable reads the pad through SDL2, so the translation only stays off once
+// SDL2.dll is really loaded. if it never loads (a dll the xbox doesn't have),
+// the pad keeps working the old way
+bool g_padModActive = false;
+
+void CheckPadMod()
+{
+    std::wstring path = std::wstring{ winrt::Windows::Storage::ApplicationData::Current().LocalFolder().Path() } + L"\\padmod.on";
+    g_padModActive = GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES;
+    Log("controller mod: %s", g_padModActive ? "yes" : "no");
+}
+
+// GetModuleHandleW isn't in the uwp headers, find it in kernelbase the same way
+// the host finds LoadLibraryExW
+bool SdlLoaded()
+{
+    static bool loaded = false;
+    static std::chrono::steady_clock::time_point last{};
+    if (loaded) return true;
+    auto now = std::chrono::steady_clock::now();
+    if (now - last < std::chrono::seconds(2)) return false;
+    last = now;
+    using GetModuleFn = HMODULE(WINAPI*)(LPCWSTR);
+    static GetModuleFn getModule = [] {
+        MEMORY_BASIC_INFORMATION mbi{};
+        if (!VirtualQuery(reinterpret_cast<void*>(&CreateFile2), &mbi, sizeof(mbi))) return GetModuleFn{};
+        return reinterpret_cast<GetModuleFn>(GetProcAddress(static_cast<HMODULE>(mbi.AllocationBase), "GetModuleHandleW"));
+    }();
+    if (getModule && getModule(L"SDL2.dll")) {
+        loaded = true;
+        Log("SDL2.dll is loaded, controllable has the pad now");
+    }
+    return loaded;
+}
+
 void PadInput(Window* win)
 {
     using namespace pad;
     GLFWgamepadstate s{};
-    if (!win || !ReadPad(0, &s)) {
+    if ((g_padModActive && SdlLoaded()) || !win || !ReadPad(0, &s)) {
         g_showCursor = false;
         return;
     }
@@ -1175,6 +1213,7 @@ API void glfwWindowHintString(int, const char*) {}
 API GLFWwindow* glfwCreateWindow(int width, int height, const char* title, GLFWmonitor*, GLFWwindow* share)
 {
     REQUIRE_INIT(nullptr)
+    CheckPadMod();
     Log("glfwCreateWindow(%d, %d, \"%s\") api=0x%x version=%d.%d profile=0x%x", width, height, title ? title : "",
         g_hints.clientApi, g_hints.major, g_hints.minor, g_hints.profile);
     if (g_hints.clientApi == GLFW_NO_API) {

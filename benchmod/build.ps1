@@ -12,8 +12,9 @@ New-Item -ItemType Directory -Force $out | Out-Null
 & "$jdk\bin\javac.exe" -encoding UTF-8 --release 16 -proc:none -cp "$mcJar;$mixin" -d $out (Get-ChildItem -Recurse "$here\src" -Filter *.java).FullName
 if ($LASTEXITCODE -ne 0) { throw "javac failed" }
 Copy-Item "$here\resources\*" $out
-& "$jdk\bin\jar.exe" --create --file "$(Split-Path $here)\staging\package\mods\xbox-mc-bench.jar" -C $out .
-Write-Host "bench mod in staging\package\mods (the launcher copies it into game\mods)"
+$benchJar = "$(Split-Path $here)\staging\package\mods\1.17.1\xbox-mc-bench.jar"
+& "$jdk\bin\jar.exe" --create --file $benchJar -C $out .
+Write-Host "bench mod in staging\package\mods\1.17.1 (the launcher copies it into game\mods)"
 # jar.exe writes through a java temp file, which ends up owner-only and the app
 # can't read it. give it the folder's normal permissions back
-icacls "$(Split-Path $here)\staging\package\mods\xbox-mc-bench.jar" /reset | Out-Null
+icacls $benchJar /reset | Out-Null

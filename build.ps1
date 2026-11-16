@@ -85,7 +85,8 @@ Copy-Item -Recurse (Join-Path $JavaDir "patch") (Join-Path $stage "patch")
 foreach ($d in @("jre21", "lib21", "natives21", "patch21")) {
     Copy-Item -Recurse (Join-Path $JavaDir $d) (Join-Path $stage $d)
 }
-# my own mods that the launcher copies into game\mods (xbox-mc-compat)
+# my own mods, mods\<minecraft version>\, the launcher copies them into that
+# version's mods folder
 Copy-Item -Recurse (Join-Path $JavaDir "mods") (Join-Path $stage "mods")
 # jvm.dll needs the desktop vc runtime and the loader only looks in the
 # package root for it, not next to jvm.dll

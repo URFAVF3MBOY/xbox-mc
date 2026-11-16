@@ -430,6 +430,7 @@ public class Launcher {
             Fabric.defaultOptions(gameDir);
 
             // fabric + mods. if that part breaks the game still starts, just vanilla
+            java.nio.file.Files.deleteIfExists(local.resolve("padmod.on"));
             try {
                 Fabric f = new Fabric(root, gameDir, new Downloader.Ui() {
                     public void status(String text) { setStatus(text); }
@@ -439,6 +440,10 @@ public class Launcher {
                 f.mods(mc, install);
                 if (mc.equals("1.17.1")) Fabric.tuneSettingsOnce(gameDir, log);
                 fabric = fr;
+                // tells glfw3.dll the game brings its own controller support
+                Path padFlag = local.resolve("padmod.on");
+                if (Fabric.hasPadMod(mc)) java.nio.file.Files.writeString(padFlag, mc + "\n");
+                else java.nio.file.Files.deleteIfExists(padFlag);
             } catch (Exception e) {
                 e.printStackTrace(log);
                 log.println("fabric didn't work, starting vanilla");

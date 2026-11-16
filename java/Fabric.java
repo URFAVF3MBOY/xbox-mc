@@ -26,11 +26,30 @@ public final class Fabric {
     // uniform block, the xbox one's gpu driver can't link those)
     static final String[] MODS_1_17 = { "fabric-api", "sodium", "sodium-extra", "reeses-sodium-options",
             "lithium", "lazydfu", "ferrite-core", "starlight", "entityculling" };
-    // 1.21.11 starts with just fabric api. sodium and my compat mod are written
-    // for 1.17.1, the newer ones get tried once the game itself runs
-    static final String[] MODS_1_21 = { "fabric-api" };
+    // 1.21.11: the newer builds of the same speed mods (my 1.17.1 compat mod is
+    // for sodium 0.3 only), and immediatelyfast for the hud/text drawing
+    static final String[] MODS_1_21 = { "fabric-api", "sodium", "sodium-extra", "reeses-sodium-options",
+            "lithium", "ferrite-core", "entityculling", "immediatelyfast" };
+
+    // mods that aren't on modrinth, straight from curseforge's file server,
+    // pinned to one file each: slug, url, sha1, size.
+    // controllable = controller support (needs framework). with it the app's own
+    // pad -> keys/mouse translation in glfw3.dll stays off
+    static final String[][] PINNED_1_21 = {
+        { "controllable", "https://mediafilez.forgecdn.net/files/7411/286/controllable-fabric-1.21.11-0.25.7.jar",
+          "f350119178e623cd648d3e5fd2d1e24a2e39863a", "6713407" },
+        { "framework", "https://mediafilez.forgecdn.net/files/7530/353/framework-fabric-1.21.11-0.13.11.jar",
+          "5daa599fb6510ffb3d4d4b5e2569413dcff68ceb", "1715042" },
+    };
 
     static String[] modsFor(String mc) { return mc.equals("1.17.1") ? MODS_1_17 : MODS_1_21; }
+    static String[][] pinnedFor(String mc) { return mc.equals("1.17.1") ? new String[0][] : PINNED_1_21; }
+
+    // does this version come with a controller mod
+    public static boolean hasPadMod(String mc) {
+        for (String[] p : pinnedFor(mc)) if (p[0].equals("controllable")) return true;
+        return false;
+    }
 
     public static final class Result {
         public String mainClass;
@@ -93,10 +112,10 @@ public final class Fabric {
         Files.createDirectories(dir);
         String[] mods = modsFor(mc);
 
-        // my own mods ship with the app (install\mods), copied every start so
-        // they're always the version that belongs to this build. they're for 1.17.1
-        Path bundled = install.resolve("mods");
-        if (mc.equals("1.17.1") && Files.isDirectory(bundled)) {
+        // my own mods ship with the app (install\mods\<version>), copied every
+        // start so they're always the version that belongs to this build
+        Path bundled = install.resolve("mods").resolve(mc);
+        if (Files.isDirectory(bundled)) {
             try (java.util.stream.Stream<Path> files = Files.list(bundled)) {
                 for (Path jar : (Iterable<Path>) files::iterator) {
                     Files.copy(jar, dir.resolve(jar.getFileName()), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
@@ -132,10 +151,19 @@ public final class Fabric {
             Object old = installed.get(slug);
             if (old != null && !old.equals(name)) Files.deleteIfExists(dir.resolve((String) old));
         }
+        List<String> keep = new ArrayList<>(java.util.Arrays.asList(mods));
+        for (String[] p : pinnedFor(mc)) {
+            String name = p[1].substring(p[1].lastIndexOf('/') + 1);
+            items.add(new Downloader.Item(p[1], p[2], Long.parseLong(p[3]), dir.resolve(name)));
+            now.put(p[0], name);
+            keep.add(p[0]);
+            Object old = installed.get(p[0]);
+            if (old != null && !old.equals(name)) Files.deleteIfExists(dir.resolve((String) old));
+        }
         new Downloader(game, ui, log).fetchAll(items, "downloading mods");
         // mods I took off the list get removed again
         for (Map.Entry<String, Object> e : installed.entrySet()) {
-            if (!now.containsKey(e.getKey()) && java.util.Arrays.asList(mods).indexOf(e.getKey()) < 0) {
+            if (!now.containsKey(e.getKey()) && keep.indexOf(e.getKey()) < 0) {
                 Files.deleteIfExists(dir.resolve((String) e.getValue()));
                 log.println("mod " + e.getKey() + " removed");
             }

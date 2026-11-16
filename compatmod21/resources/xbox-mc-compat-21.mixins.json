@@ -1,0 +1,8 @@
+{
+  "required": false,
+  "minVersion": "0.8",
+  "package": "xbox_mc.compat21",
+  "compatibilityLevel": "JAVA_17",
+  "client": [ "SdlFromPackageMixin" ],
+  "injectors": { "defaultRequire": 0 }
+}
